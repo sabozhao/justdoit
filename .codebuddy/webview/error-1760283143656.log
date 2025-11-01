@@ -1,0 +1,6 @@
+Webview errors at url: http://localhost:5173/admin
+error: 
+ API请求失败: Error: 请求失败: Not Found
+Users API error: Error: 请求失败: Not Found
+Question banks API error: Error: 请求失败: Not Found
+Stats API error: Error: 请求失败: Not Found

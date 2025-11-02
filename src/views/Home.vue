@@ -2,9 +2,9 @@
   <div class="home">
     <div class="hero-section">
       <div class="hero-content">
-        <h1 class="hero-title">智能刷题平台</h1>
-        <p class="hero-subtitle">提升学习效率，掌握知识要点</p>
-        <p class="hero-free">永久免费 · 无限制使用</p>
+        <h1 class="hero-title">刷个题</h1>
+        <p class="hero-subtitle">AI 智能识别题目，轻松导入题库，高效刷题练习</p>
+        <p class="hero-free">永久免费 · 无限制使用 · AI 智能导入</p>
         <div class="hero-buttons">
           <el-button type="primary" size="large" @click="$router.push('/library')">
             <el-icon><FolderOpened /></el-icon>
@@ -69,8 +69,8 @@
         <el-col :span="8">
           <div class="feature-card">
             <el-icon class="feature-icon"><Upload /></el-icon>
-            <h3>自定义题库</h3>
-            <p>支持上传JSON、Excel、CSV格式的题库文件，灵活管理各类题目</p>
+            <h3>AI 智能识别</h3>
+            <p>支持上传PDF、Word、Excel、CSV格式文件，AI自动识别题目、选项和答案，轻松导入题库</p>
           </div>
         </el-col>
         <el-col :span="8">

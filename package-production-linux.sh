@@ -71,12 +71,24 @@ cp src/api/index.js src/api/index.js.backup
 
 # 配置生产环境API地址为相对路径（通过nginx代理）
 echo -e "${YELLOW}配置生产环境API地址...${NC}"
-# 使用更简单的方法替换API地址
-echo "const API_BASE_URL = '/api';" > src/api/index.js.tmp
-tail -n +3 src/api/index.js >> src/api/index.js.tmp
-mv src/api/index.js.tmp src/api/index.js
-
-echo -e "${GREEN}API地址已配置为相对路径 '/api'${NC}"
+# 使用更可靠的方法：读取文件内容，替换后写回
+# 这样可以避免 macOS 和 Linux sed 命令差异的问题
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS: 使用 perl 或 python 来替换（更可靠）
+    perl -pi -e "s|export const API_BASE_URL = .*?;|export const API_BASE_URL = '/api';|g" src/api/index.js
+else
+    # Linux: 使用 sed
+    sed -i.tmp "s|export const API_BASE_URL = .*;|export const API_BASE_URL = '/api';|g" src/api/index.js
+    rm -f src/api/index.js.tmp
+fi
+# 验证替换是否成功
+if grep -q "export const API_BASE_URL = '/api';" src/api/index.js; then
+    echo -e "${GREEN}API地址已配置为相对路径 '/api'${NC}"
+else
+    echo -e "${YELLOW}警告: API地址替换可能失败，请检查文件${NC}"
+    echo "当前文件内容:"
+    head -3 src/api/index.js
+fi
 
 # 构建前端静态文件
 echo "构建前端静态文件..."
@@ -383,6 +395,33 @@ if ! command -v nginx &> /dev/null; then
     echo ""
 fi
 
+# 检查 libmupdf (PDF解析依赖)
+if ! ldconfig -p 2>/dev/null | grep -q libmupdf; then
+    echo -e "${YELLOW}警告: 未检测到 libmupdf 库，PDF解析功能将无法使用${NC}"
+    echo "安装方法："
+    echo "  Ubuntu/Debian: sudo apt-get install libmupdf-dev"
+    echo "  CentOS/RHEL: sudo yum install mupdf-devel"
+    echo "  或者: sudo yum install libmupdf"
+    echo ""
+    echo -e "${BLUE}是否现在尝试安装 libmupdf? (y/n)${NC}"
+    read -r answer
+    if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+        if command -v apt-get &> /dev/null; then
+            echo -e "${BLUE}正在安装 libmupdf-dev...${NC}"
+            sudo apt-get update && sudo apt-get install -y libmupdf-dev || {
+                echo -e "${YELLOW}安装失败，请手动安装: sudo apt-get install libmupdf-dev${NC}"
+            }
+        elif command -v yum &> /dev/null; then
+            echo -e "${BLUE}正在安装 mupdf-devel...${NC}"
+            sudo yum install -y mupdf-devel || sudo yum install -y libmupdf || {
+                echo -e "${YELLOW}安装失败，请手动安装: sudo yum install mupdf-devel${NC}"
+            }
+        else
+            echo -e "${YELLOW}未找到包管理器，请手动安装 libmupdf${NC}"
+        fi
+    fi
+fi
+
 # 获取当前路径
 CURRENT_PATH=$(pwd)
 FRONTEND_PATH="$CURRENT_PATH/frontend"
@@ -461,6 +500,33 @@ cat > "$DIST_DIR/README.md" << 'EOF'
 - 可用端口 80（前端）和 3005（后端）
 - 至少 100MB 磁盘空间
 - 至少 256MB 内存
+- libmupdf 库（PDF解析功能必需）
+
+## 安装系统依赖
+
+### libmupdf（PDF解析功能必需）
+
+后端服务使用 `go-fitz` 库解析PDF文件，需要系统安装 `libmupdf` 库：
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install libmupdf-dev
+```
+
+**CentOS/RHEL:**
+```bash
+sudo yum install mupdf-devel
+# 或者
+sudo yum install libmupdf
+```
+
+**验证安装:**
+```bash
+ldconfig -p | grep mupdf
+```
+
+如果看到 `libmupdf.so` 相关的输出，说明安装成功。
 
 ## 快速部署
 
@@ -494,7 +560,31 @@ sudo nginx -t
 sudo systemctl reload nginx
 ```
 
-### 4. 启动后端服务
+### 4. 安装系统依赖（重要！）
+
+后端服务需要 `libmupdf` 库来解析PDF文件，请先安装：
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install libmupdf-dev
+```
+
+**CentOS/RHEL:**
+```bash
+sudo yum install mupdf-devel
+# 或者
+sudo yum install libmupdf
+```
+
+**验证安装:**
+```bash
+ldconfig -p | grep mupdf
+```
+
+如果启动时遇到 `cannot load library: libmupdf.so` 错误，说明 libmupdf 未正确安装。
+
+### 5. 启动后端服务
 ```bash
 cd backend
 ./start-backend.sh

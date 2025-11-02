@@ -5,8 +5,8 @@
         <div class="header-content">
           <div class="logo">
             <el-icon><Document /></el-icon>
-            <span class="desktop-only">智能刷题平台</span>
-            <span class="mobile-only">刷题平台</span>
+            <span class="desktop-only">刷个题</span>
+            <span class="mobile-only">刷个题</span>
           </div>
           <div class="header-right">
             <!-- 桌面端菜单 -->

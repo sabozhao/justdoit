@@ -56,6 +56,9 @@ func setupRoutes() *gin.Engine {
 		questionBanks.GET("/:id/questions", getBankQuestions)
 	}
 
+	// 示例文件下载（无需认证）
+	api.GET("/demo/:type", downloadDemoFile)
+
 	// 题目管理相关路由（需要认证）
 	questions := api.Group("/questions")
 	questions.Use(authMiddleware())
@@ -93,6 +96,7 @@ func setupRoutes() *gin.Engine {
 		admin.DELETE("/users/:id", deleteUser)
 		admin.DELETE("/question-banks/:id", deleteQuestionBankAdmin)
 		admin.PATCH("/users/:id", updateUserAdmin)
+		admin.GET("/settings", getSettings)
 		admin.PUT("/settings", updateSettings)
 	}
 

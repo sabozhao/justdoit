@@ -12,7 +12,7 @@ func getWrongQuestions(c *gin.Context) {
 	userID := c.GetString("userID")
 
 	query := `
-		SELECT wq.id, wq.user_id, wq.bank_id, wq.question_id, wq.question, wq.options, wq.answer, wq.explanation, wq.added_at, qb.name as bank_name
+		SELECT wq.id, wq.user_id, wq.bank_id, wq.question_id, wq.question, wq.options, wq.answer, wq.is_multiple, wq.explanation, wq.added_at, qb.name as bank_name
 		FROM wrong_questions wq 
 		LEFT JOIN question_banks qb ON wq.bank_id = qb.id 
 		WHERE wq.user_id = ?
@@ -29,8 +29,9 @@ func getWrongQuestions(c *gin.Context) {
 	var wrongQuestions []WrongQuestion
 	for rows.Next() {
 		var wq WrongQuestion
-		var optionsJSON string
-		err := rows.Scan(&wq.ID, &wq.UserID, &wq.BankID, &wq.QuestionID, &wq.Question, &optionsJSON, &wq.Answer, &wq.Explanation, &wq.AddedAt, &wq.BankName)
+		var optionsJSON, answerJSON string
+		var isMultiple bool
+		err := rows.Scan(&wq.ID, &wq.UserID, &wq.BankID, &wq.QuestionID, &wq.Question, &optionsJSON, &answerJSON, &isMultiple, &wq.Explanation, &wq.AddedAt, &wq.BankName)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -43,6 +44,14 @@ func getWrongQuestions(c *gin.Context) {
 			return
 		}
 
+		// 解析答案JSON（支持数组）
+		err = json.Unmarshal([]byte(answerJSON), &wq.Answer)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse answer"})
+			return
+		}
+
+		wq.IsMultiple = isMultiple
 		wrongQuestions = append(wrongQuestions, wq)
 	}
 
@@ -57,7 +66,7 @@ func addWrongQuestion(c *gin.Context) {
 		QuestionID  string   `json:"questionId" binding:"required"`
 		Question    string   `json:"question" binding:"required"`
 		Options     []string `json:"options" binding:"required"`
-		Answer      int      `json:"answer"`
+		Answer      []int    `json:"answer" binding:"required"` // 支持多选
 		Explanation string   `json:"explanation"`
 	}
 
@@ -80,19 +89,28 @@ func addWrongQuestion(c *gin.Context) {
 		return
 	}
 
-	// 序列化选项
+	// 序列化选项和答案
 	optionsJSON, err := json.Marshal(req.Options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal options"})
 		return
 	}
 
+	answerJSON, err := json.Marshal(req.Answer)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to marshal answer"})
+		return
+	}
+
+	// 判断是否为多选题
+	isMultiple := len(req.Answer) > 1
+
 	// 添加新的错题
 	wrongQuestionID := generateUUID()
 	_, err = db.Exec(`INSERT INTO wrong_questions 
-		(id, user_id, bank_id, question_id, question, options, answer, explanation) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		wrongQuestionID, userID, req.BankID, req.QuestionID, req.Question, string(optionsJSON), req.Answer, req.Explanation)
+		(id, user_id, bank_id, question_id, question, options, answer, is_multiple, explanation) 
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		wrongQuestionID, userID, req.BankID, req.QuestionID, req.Question, string(optionsJSON), string(answerJSON), isMultiple, req.Explanation)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

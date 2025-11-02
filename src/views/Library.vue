@@ -78,7 +78,15 @@
     </div>
 
     <!-- 上传对话框 -->
-    <el-dialog v-model="showUploadDialog" title="上传题库" width="600px">
+    <el-dialog 
+      v-model="showUploadDialog" 
+      title="上传题库" 
+      width="600px" 
+      :close-on-click-modal="!isUploading" 
+      :close-on-press-escape="!isUploading" 
+      :show-close="!isUploading"
+      @closed="resetUploadForm"
+    >
       <el-form :model="uploadForm" label-width="80px">
         <el-form-item label="题库名称" required>
           <el-input v-model="uploadForm.name" placeholder="请输入题库名称" />
@@ -88,68 +96,247 @@
         </el-form-item>
         <el-form-item label="选择文件" required>
           <el-upload
+            ref="uploadRef"
             :auto-upload="false"
             :show-file-list="true"
             :limit="1"
-            accept=".json,.xlsx,.xls,.csv"
+            accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
             :on-change="handleFileChange"
+            :on-remove="handleFileRemove"
           >
             <el-button type="primary">选择文件</el-button>
             <template #tip>
               <div class="el-upload__tip">
-                支持 JSON、Excel (.xlsx, .xls) 和 CSV 格式的题库文件
+                支持 Excel (.xlsx, .xls)、CSV、PDF 和 Word (.doc, .docx) 格式的题库文件<br/>
+                <span style="color: #409eff; font-weight: bold;">✨ AI 智能识别：</span>上传 PDF 或 Word 文件后，系统会自动使用 AI 识别题目、选项和答案，轻松导入题库
               </div>
             </template>
           </el-upload>
         </el-form-item>
+        
+        <el-form-item label="解析方式" required>
+          <el-radio-group v-model="uploadForm.parseMode">
+            <el-radio label="format">固定格式解析</el-radio>
+            <el-radio label="ai">AI 自动分析</el-radio>
+          </el-radio-group>
+          <div class="parse-mode-tip">
+            <div v-if="uploadForm.parseMode === 'format'">
+              <strong>固定格式解析：</strong>按照文件的标准格式解析（Excel/CSV 按列格式，Word 按文本格式）
+            </div>
+            <div v-else>
+              <strong>AI 自动分析：</strong>使用 AI 智能识别文件中的题目（需要配置腾讯云 AI 服务）
+            </div>
+          </div>
+        </el-form-item>
       </el-form>
       
-      <el-collapse>
-        <el-collapse-item title="JSON格式示例" name="example">
-          <pre class="json-example">{{ jsonExample }}</pre>
-        </el-collapse-item>
-        <el-collapse-item title="Excel/CSV格式示例" name="excel-example">
+      <el-collapse v-if="uploadForm.parseMode === 'format'">
+        <el-collapse-item title="Excel格式示例" name="excel-example">
           <div class="format-example">
-            <p><strong>Excel/CSV文件应包含以下列：</strong></p>
+            <p><strong>Excel文件格式（列顺序）：</strong></p>
+            <p style="color: #409eff; font-weight: bold; margin: 10px 0;">
+              题目、正确答案、选项A、选项B、选项C、...、选项J、解析
+            </p>
             <table class="format-table">
               <thead>
                 <tr>
                   <th>题目</th>
+                  <th>正确答案</th>
                   <th>选项A</th>
                   <th>选项B</th>
                   <th>选项C</th>
                   <th>选项D</th>
-                  <th>正确答案</th>
+                  <th>...</th>
+                  <th>选项J</th>
                   <th>解析</th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
                   <td>这是一道示例题目？</td>
+                  <td>A</td>
                   <td>选项A内容</td>
                   <td>选项B内容</td>
                   <td>选项C内容</td>
                   <td>选项D内容</td>
-                  <td>A</td>
+                  <td>...</td>
+                  <td></td>
                   <td>答案解析（可选）</td>
+                </tr>
+                <tr>
+                  <td>多选题示例？</td>
+                  <td>A,B,C</td>
+                  <td>选项A</td>
+                  <td>选项B</td>
+                  <td>选项C</td>
+                  <td>选项D</td>
+                  <td>...</td>
+                  <td></td>
+                  <td>多选题解析</td>
+                </tr>
+                <tr>
+                  <td>最多选项示例？</td>
+                  <td>J</td>
+                  <td>选项A</td>
+                  <td>选项B</td>
+                  <td>选项C</td>
+                  <td>选项D</td>
+                  <td>...</td>
+                  <td>选项J</td>
+                  <td>支持最多10个选项</td>
                 </tr>
               </tbody>
             </table>
             <p class="format-note">
-              <strong>注意：</strong><br>
-              • 正确答案可以填写 A/B/C/D 或 1/2/3/4<br>
-              • 选项C和D是可选的，至少需要A和B两个选项<br>
-              • 解析列是可选的<br>
-              • 支持中英文列名
+              <strong>格式说明：</strong><br>
+              • <strong>列顺序固定：</strong>题目（第1列）、正确答案（第2列，固定位置）、选项A-J（第3-12列）、解析（最后一列）<br>
+              • <strong>正确答案：</strong>可以填写 A/B/C/D/E/F/G/H/I/J 或 1/2/3/4/5/6/7/8/9/10，多选题使用逗号分隔（如 A,B,C）<br>
+              • <strong>选项：</strong>至少需要选项A和B，最多支持10个选项（A-J）<br>
+              • <strong>解析列：</strong>可选，放在最后<br>
+              • <strong>列名：</strong>支持中英文列名，但列顺序需保持一致
             </p>
+            <div class="demo-download">
+              <el-button type="primary" size="small" @click="downloadDemo('excel')">
+                <el-icon><Download /></el-icon>
+                下载Excel示例文件
+              </el-button>
+            </div>
+          </div>
+        </el-collapse-item>
+        
+        <el-collapse-item title="CSV格式示例" name="csv-example">
+          <div class="format-example">
+            <p><strong>CSV文件格式（列顺序）：</strong></p>
+            <p style="color: #409eff; font-weight: bold; margin: 10px 0;">
+              题目、正确答案、选项A、选项B、选项C、...、选项J、解析
+            </p>
+            <table class="format-table">
+              <thead>
+                <tr>
+                  <th>题目</th>
+                  <th>正确答案</th>
+                  <th>选项A</th>
+                  <th>选项B</th>
+                  <th>选项C</th>
+                  <th>选项D</th>
+                  <th>...</th>
+                  <th>选项J</th>
+                  <th>解析</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>这是一道示例题目？</td>
+                  <td>A</td>
+                  <td>选项A内容</td>
+                  <td>选项B内容</td>
+                  <td>选项C内容</td>
+                  <td>选项D内容</td>
+                  <td>...</td>
+                  <td></td>
+                  <td>答案解析（可选）</td>
+                </tr>
+                <tr>
+                  <td>多选题示例？</td>
+                  <td>"A,B,C"</td>
+                  <td>选项A</td>
+                  <td>选项B</td>
+                  <td>选项C</td>
+                  <td>选项D</td>
+                  <td>...</td>
+                  <td></td>
+                  <td>多选题解析</td>
+                </tr>
+                <tr>
+                  <td>最多选项示例？</td>
+                  <td>J</td>
+                  <td>选项A</td>
+                  <td>选项B</td>
+                  <td>选项C</td>
+                  <td>选项D</td>
+                  <td>...</td>
+                  <td>选项J</td>
+                  <td>支持最多10个选项</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="format-note">
+              <strong>格式说明：</strong><br>
+              • <strong>列顺序固定：</strong>题目（第1列）、正确答案（第2列，固定位置）、选项A-J（第3-12列）、解析（最后一列）<br>
+              • <strong>CSV规则：</strong>使用逗号分隔，包含逗号的字段需要用双引号包围（如多选题答案 "A,B,C"）<br>
+              • <strong>正确答案：</strong>可以填写 A/B/C/D/E/F/G/H/I/J 或 1/2/3/4/5/6/7/8/9/10，多选题使用逗号分隔（如 "A,B,C"）<br>
+              • <strong>选项：</strong>至少需要选项A和B，最多支持10个选项（A-J）<br>
+              • <strong>解析列：</strong>可选，放在最后<br>
+              • <strong>列名：</strong>支持中英文列名，但列顺序需保持一致
+            </p>
+            <div class="demo-download">
+              <el-button type="primary" size="small" @click="downloadDemo('csv')">
+                <el-icon><Download /></el-icon>
+                下载CSV示例文件
+              </el-button>
+            </div>
+          </div>
+        </el-collapse-item>
+        
+        <el-collapse-item title="Word格式示例" name="docx-example">
+          <div class="format-example">
+            <p><strong>Word（DOCX）文件固定格式说明：</strong></p>
+            <div class="format-text-example">
+              <pre>这是一道单选题？
+A. 选项A的内容
+B. 选项B的内容
+C. 选项C的内容（可选）
+D. 选项D的内容（可选）
+答案：A
+解析：这是单选题的解析（可选）
+
+这是另一道单选题？
+A. 第一个选项
+B. 第二个选项
+C. 第三个选项
+D. 第四个选项
+答案：B
+
+多选题示例？
+A. 选项A
+B. 选项B
+C. 选项C
+D. 选项D
+答案：A,B,C
+解析：这是多选题的解析</pre>
+            </div>
+            <p class="format-note">
+              <strong>格式要求：</strong><br>
+              • 每道题目之间用空行分隔<br>
+              • 题目内容可以跨多行<br>
+              • 选项以 A. B. C. D. 等开头（至少需要 A 和 B，最多支持到 J）<br>
+              • 答案格式：答案：A 或 答案：A,B,C（多选题使用逗号分隔）<br>
+              • 答案也可以写成：正确答案：A 或 Answer：A<br>
+              • 解析可选，格式：解析：解析内容 或 Explanation：解析内容<br>
+              • 支持单选和多选题（根据答案个数自动判断）
+            </p>
+            <div class="demo-download">
+              <el-button type="primary" size="small" @click="downloadDemo('docx')">
+                <el-icon><Download /></el-icon>
+                下载Word示例文件
+              </el-button>
+            </div>
           </div>
         </el-collapse-item>
       </el-collapse>
 
+      <!-- 上传状态提示 -->
+      <div v-if="isUploading" class="upload-status">
+        <el-icon class="is-loading"><Loading /></el-icon>
+        <span>{{ uploadStatus || '正在处理中...' }}</span>
+      </div>
+
       <template #footer>
         <span class="dialog-footer">
-          <el-button @click="showUploadDialog = false">取消</el-button>
-          <el-button type="primary" @click="uploadQuestionBank">确定上传</el-button>
+          <el-button @click="showUploadDialog = false" :disabled="isUploading">取消</el-button>
+          <el-button type="primary" @click="uploadQuestionBank" :loading="isUploading" :disabled="isUploading">
+            {{ isUploading ? '上传中...' : '确定上传' }}
+          </el-button>
         </span>
       </template>
     </el-dialog>
@@ -173,6 +360,11 @@
                 </el-button>
               </div>
               <el-input v-model="question.question" placeholder="请输入题目内容" class="question-input" />
+              <div style="margin: 10px 0;">
+                <span style="margin-right: 10px; color: #909399; font-size: 12px;">
+                  提示：选择单个答案为单选题，选择多个答案为多选题
+                </span>
+              </div>
               <div class="options-container">
                 <div v-for="(option, optionIndex) in question.options" :key="optionIndex" class="option-item">
                   <span class="option-label">{{ String.fromCharCode(65 + optionIndex) }}:</span>
@@ -181,17 +373,32 @@
                     删除
                   </el-button>
                 </div>
-                <el-button type="text" @click="addOption(index)" v-if="question.options.length < 4">
-                  + 添加选项
+                <el-button type="text" @click="addOption(index)" v-if="question.options.length < 10">
+                  + 添加选项（最多10个）
                 </el-button>
+                <div v-else style="color: #909399; font-size: 12px; margin-top: 8px;">
+                  已达到最大选项数（10个）
+                </div>
               </div>
               <div class="answer-container">
                 <span>正确答案：</span>
-                <el-radio-group v-model="question.answer">
-                  <el-radio v-for="(option, optionIndex) in question.options" :key="optionIndex" :label="optionIndex">
-                    {{ String.fromCharCode(65 + optionIndex) }}
-                  </el-radio>
-                </el-radio-group>
+                <!-- 使用checkbox组，支持单选和多选 -->
+                <el-checkbox-group v-model="question.answer" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;" @change="handleAnswerChange(index)">
+                  <el-checkbox
+                    v-for="(option, optionIndex) in question.options"
+                    :key="optionIndex"
+                    :label="optionIndex"
+                    :disabled="!option.trim()"
+                  >
+                    {{ String.fromCharCode(65 + optionIndex) }}. {{ option || `选项 ${String.fromCharCode(65 + optionIndex)}` }}
+                  </el-checkbox>
+                </el-checkbox-group>
+                <div v-if="!Array.isArray(question.answer) || question.answer.length === 0" style="color: #f56c6c; font-size: 12px; margin-top: 8px;">
+                  请至少选择一个正确答案
+                </div>
+                <div v-else style="color: #409eff; font-size: 12px; margin-top: 8px;">
+                  {{ question.answer.length === 1 ? '单选题（1个答案）' : `多选题（${question.answer.length}个答案）` }}
+                </div>
               </div>
               <el-input v-model="question.explanation" placeholder="答案解析（可选）" class="explanation-input" />
             </div>
@@ -299,7 +506,8 @@ import { ref, reactive, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExamStore } from '@/stores/exam'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Upload, MoreFilled, VideoPlay, Delete, Document, Calendar, Edit } from '@element-plus/icons-vue'
+import { Plus, Upload, MoreFilled, VideoPlay, Delete, Document, Calendar, Edit, Loading, Download } from '@element-plus/icons-vue'
+import { API_BASE_URL } from '@/api'
 
 export default {
   name: 'Library',
@@ -310,7 +518,9 @@ export default {
     VideoPlay,
     Delete,
     Document,
-    Calendar
+    Calendar,
+    Loading,
+    Download
   },
   setup() {
     const router = useRouter()
@@ -320,9 +530,13 @@ export default {
     const showCreateDialog = ref(false)
     const showManageDialog = ref(false)
     const selectedFile = ref(null)
+    const uploadRef = ref(null)  // el-upload 组件引用
+    const isUploading = ref(false)
+    const uploadStatus = ref('')
     const uploadForm = reactive({
       name: '',
-      description: ''
+      description: '',
+      parseMode: 'format' // 'format' 或 'ai'
     })
     const createForm = reactive({
       name: '',
@@ -331,7 +545,7 @@ export default {
         {
           question: '',
           options: ['', ''],
-          answer: 0,
+          answer: [], // 答案数组，空数组表示未选择，根据数组长度自动判断单选/多选
           explanation: ''
         }
       ]
@@ -365,6 +579,7 @@ export default {
       return banks.filter(bank => bank && bank.id)
     })
 
+    // JSON格式已移除，保留此变量以防其他地方引用
     const jsonExample = `{
   "questions": [
     {
@@ -380,6 +595,10 @@ export default {
       selectedFile.value = file
     }
 
+    const handleFileRemove = () => {
+      selectedFile.value = null
+    }
+
     const uploadQuestionBank = async () => {
       if (!uploadForm.name.trim()) {
         ElMessage.error('请输入题库名称')
@@ -391,51 +610,74 @@ export default {
         return
       }
 
-      try {
-        const fileExt = selectedFile.value.name.split('.').pop().toLowerCase()
-        
-        if (fileExt === 'json') {
-          // 处理JSON文件
-          const fileContent = await readFileContent(selectedFile.value.raw)
-          const questionData = JSON.parse(fileContent)
-          
-          if (!questionData.questions || !Array.isArray(questionData.questions)) {
-            throw new Error('JSON格式不正确，缺少questions数组')
-          }
+      if (!uploadForm.parseMode) {
+        ElMessage.error('请选择解析方式')
+        return
+      }
 
-          // 验证题目格式
-          for (let i = 0; i < questionData.questions.length; i++) {
-            const q = questionData.questions[i]
-            if (!q.question || !q.options || !Array.isArray(q.options) || typeof q.answer !== 'number') {
-              throw new Error(`第${i + 1}题格式不正确`)
-            }
+      const fileExt = selectedFile.value.name.split('.').pop().toLowerCase()
+      
+      // 验证文件格式和解析方式的兼容性
+      if (uploadForm.parseMode === 'format') {
+        if (fileExt === 'pdf' || fileExt === 'doc') {
+          if (fileExt === 'pdf') {
+            ElMessage.warning('PDF 文件不支持固定格式解析，请使用 AI 自动分析')
+          } else {
+            ElMessage.warning('旧版 DOC 格式不支持固定格式解析，请转换为 DOCX 格式或使用 AI 自动分析')
           }
-
-          await examStore.addQuestionBank({
-            name: uploadForm.name,
-            description: uploadForm.description,
-            questions: questionData.questions
-          })
-        } else {
-          // 处理Excel/CSV文件 - 先创建题库，然后上传文件
-          const newBank = await examStore.addQuestionBank({
-            name: uploadForm.name,
-            description: uploadForm.description,
-            questions: [] // 先创建空题库
-          })
-          
-          // 然后上传文件到这个题库
-          const formData = new FormData()
-          formData.append('file', selectedFile.value.raw)
-          
-          await examStore.uploadQuestionBankFile(newBank.id, formData)
+          return
         }
+      }
 
+      // 开始上传，设置loading状态
+      isUploading.value = true
+      uploadStatus.value = '正在准备上传...'
+
+      try {
+        // 处理所有文件类型（Excel/CSV/PDF/DOC/DOCX）
+        uploadStatus.value = '正在创建题库...'
+        const newBank = await examStore.addQuestionBank({
+          name: uploadForm.name,
+          description: uploadForm.description,
+          questions: [] // 先创建空题库
+        })
+        
+        // 然后上传文件到这个题库
+        uploadStatus.value = '正在上传文件...'
+        const formData = new FormData()
+        formData.append('file', selectedFile.value.raw)
+        formData.append('parseMode', uploadForm.parseMode) // 传递解析模式
+        
+        // 根据解析模式设置不同的提示
+        if (uploadForm.parseMode === 'ai') {
+          uploadStatus.value = '正在使用AI解析试题，请稍候...'
+        } else {
+          if (fileExt === 'xlsx' || fileExt === 'xls') {
+            uploadStatus.value = '正在按固定格式解析Excel文件...'
+          } else if (fileExt === 'csv') {
+            uploadStatus.value = '正在按固定格式解析CSV文件...'
+          } else if (fileExt === 'docx') {
+            uploadStatus.value = '正在按固定格式解析Word文件...'
+          } else {
+            uploadStatus.value = '正在按固定格式解析文件...'
+          }
+        }
+        
+        await examStore.uploadQuestionBankFile(newBank.id, formData)
+
+        uploadStatus.value = '上传成功！'
+        // 延迟一下让用户看到成功提示
+        await new Promise(resolve => setTimeout(resolve, 500))
+        
         showUploadDialog.value = false
         resetUploadForm()
         ElMessage.success('题库上传成功！')
       } catch (error) {
         ElMessage.error('文件上传失败: ' + error.message)
+      } finally {
+        // 无论成功或失败，都要重置loading状态
+        isUploading.value = false
+        uploadStatus.value = ''
       }
     }
 
@@ -451,7 +693,66 @@ export default {
     const resetUploadForm = () => {
       uploadForm.name = ''
       uploadForm.description = ''
+      uploadForm.parseMode = 'format'
       selectedFile.value = null
+      // 清空 el-upload 组件的文件列表
+      if (uploadRef.value) {
+        uploadRef.value.clearFiles()
+      }
+    }
+
+    // 下载示例文件
+    const downloadDemo = (type) => {
+      // 使用统一的 API_BASE_URL，确保与打包脚本的配置一致
+      const url = `${API_BASE_URL}/demo/${type}`
+      
+      // 获取token
+      const token = localStorage.getItem('token')
+      const headers = {}
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+      
+      // 使用fetch下载文件
+      fetch(url, {
+        method: 'GET',
+        headers: headers
+      })
+        .then(response => {
+          if (!response.ok) {
+            throw new Error('下载失败')
+          }
+          return response.blob()
+        })
+        .then(blob => {
+          // 创建下载链接
+          const downloadUrl = window.URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = downloadUrl
+          
+          // 根据类型设置文件名
+          let filename = '题库格式示例.csv'
+          if (type === 'excel') {
+            filename = '题库格式示例.xlsx'
+          } else if (type === 'docx') {
+            filename = '题库格式示例.docx'
+          }
+          link.download = filename
+          
+          // 触发下载
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          
+          // 清理URL对象
+          window.URL.revokeObjectURL(downloadUrl)
+          
+          ElMessage.success('示例文件下载成功')
+        })
+        .catch(error => {
+          console.error('下载失败:', error)
+          ElMessage.error('下载失败: ' + error.message)
+        })
     }
 
     const resetCreateForm = () => {
@@ -461,7 +762,7 @@ export default {
         {
           question: '',
           options: ['', ''],
-          answer: 0,
+          answer: [], // 答案数组，空数组表示未选择
           explanation: ''
         }
       ]
@@ -471,9 +772,19 @@ export default {
       createForm.questions.push({
         question: '',
         options: ['', ''],
-        answer: 0,
+        answer: [], // 答案数组，空数组表示未选择
         explanation: ''
       })
+    }
+
+    // 处理答案变化（单选/多选自动判断）
+    const handleAnswerChange = (questionIndex) => {
+      const question = createForm.questions[questionIndex]
+      if (!question || !Array.isArray(question.answer)) return
+      
+      // 确保answer始终是数组格式
+      // 根据数组长度自动判断：1个答案=单选，多个答案=多选
+      // 后端会根据答案数组长度自动设置is_multiple
     }
 
     const removeQuestion = (index) => {
@@ -481,15 +792,28 @@ export default {
     }
 
     const addOption = (questionIndex) => {
-      createForm.questions[questionIndex].options.push('')
+      if (createForm.questions[questionIndex].options.length < 10) {
+        createForm.questions[questionIndex].options.push('')
+      } else {
+        ElMessage.warning('最多只能添加10个选项')
+      }
     }
 
     const removeOption = (questionIndex, optionIndex) => {
       const question = createForm.questions[questionIndex]
+      if (question.options.length <= 2) {
+        ElMessage.warning('至少需要2个选项')
+        return
+      }
+      
       question.options.splice(optionIndex, 1)
-      // 如果删除的选项是正确答案，重置为第一个选项
-      if (question.answer >= question.options.length) {
-        question.answer = 0
+      
+      // 调整答案索引（答案始终是数组格式）
+      if (Array.isArray(question.answer)) {
+        question.answer = question.answer
+          .filter(ans => ans !== optionIndex) // 移除被删除的选项
+          .map(ans => ans > optionIndex ? ans - 1 : ans) // 调整大于被删除索引的选项
+        // 如果答案数组为空且还有选项，不自动选择，让用户自己选择
       }
     }
 
@@ -499,31 +823,103 @@ export default {
         return
       }
 
-      // 验证题目
-      for (let i = 0; i < createForm.questions.length; i++) {
-        const q = createForm.questions[i]
-        if (!q.question.trim()) {
-          ElMessage.error(`第${i + 1}题的题目不能为空`)
-          return
-        }
-        if (q.options.some(opt => !opt.trim())) {
-          ElMessage.error(`第${i + 1}题的选项不能为空`)
-          return
-        }
+      // 检查题目列表是否为空
+      if (!createForm.questions || createForm.questions.length === 0) {
+        ElMessage.error('至少需要添加一道题目')
+        return
       }
 
+      let questions = []
+      
       try {
+        // 验证题目并转换答案格式为数组
+        questions = createForm.questions.map((q, index) => {
+          // 验证题目内容
+          if (!q || !q.question || !q.question.trim()) {
+            throw new Error(`第${index + 1}题的题目不能为空`)
+          }
+          
+          // 验证选项
+          if (!q.options || !Array.isArray(q.options) || q.options.length === 0) {
+            throw new Error(`第${index + 1}题至少需要2个选项`)
+          }
+          
+          // 过滤空选项，保留有效选项和索引映射
+          const validOptions = []
+          const indexMap = []
+          for (let i = 0; i < q.options.length; i++) {
+            if (q.options[i] && q.options[i].trim()) {
+              indexMap[i] = validOptions.length
+              validOptions.push(q.options[i].trim())
+            }
+          }
+          
+          if (validOptions.length < 2) {
+            throw new Error(`第${index + 1}题至少需要2个有效选项`)
+          }
+          
+          // 验证和转换答案：从原始索引转换为有效选项的索引（答案始终是数组格式）
+          let answer = []
+          if (!Array.isArray(q.answer)) {
+            // 兼容旧数据：如果是单个数字，转换为数组
+            if (q.answer !== null && q.answer !== undefined) {
+              const originalIdx = typeof q.answer === 'number' ? q.answer : parseInt(q.answer)
+              if (isNaN(originalIdx)) {
+                throw new Error(`第${index + 1}题的答案格式无效`)
+              }
+              if (originalIdx >= 0 && originalIdx < indexMap.length && indexMap[originalIdx] !== undefined) {
+                answer = [indexMap[originalIdx]]
+              } else {
+                throw new Error(`第${index + 1}题的答案索引无效（可能对应空选项）`)
+              }
+            } else {
+              throw new Error(`第${index + 1}题必须选择正确答案`)
+            }
+          } else if (q.answer.length > 0) {
+            // 答案已经是数组，转换索引
+            for (const originalIdx of q.answer) {
+              if (typeof originalIdx !== 'number' || isNaN(originalIdx)) {
+                continue // 跳过无效的索引
+              }
+              if (originalIdx >= 0 && originalIdx < indexMap.length && indexMap[originalIdx] !== undefined) {
+                const newIdx = indexMap[originalIdx]
+                if (!answer.includes(newIdx)) {
+                  answer.push(newIdx)
+                }
+              }
+            }
+            if (answer.length === 0) {
+              throw new Error(`第${index + 1}题的答案索引无效（可能对应空选项）`)
+            }
+          } else {
+            throw new Error(`第${index + 1}题必须至少选择一个正确答案`)
+          }
+          
+          // 注意：后端会根据answer数组长度自动判断单选/多选（len(answer) > 1 = 多选）
+          
+          return {
+            question: q.question.trim(),
+            options: validOptions,
+            answer: answer, // 确保是数组格式
+            explanation: q.explanation ? q.explanation.trim() : ''
+          }
+        })
+
+        // 如果所有题目验证通过，尝试创建题库
         await examStore.addQuestionBank({
           name: createForm.name,
           description: createForm.description,
-          questions: createForm.questions
+          questions: questions
         })
 
         showCreateDialog.value = false
         resetCreateForm()
         ElMessage.success('题库创建成功！')
       } catch (error) {
-        ElMessage.error('创建题库失败: ' + error.message)
+        console.error('创建题库失败:', error)
+        // 显示详细的错误信息
+        const errorMessage = error.message || error.toString() || '创建题库失败'
+        ElMessage.error(errorMessage)
       }
     }
 
@@ -684,9 +1080,13 @@ export default {
 
     return {
       showUploadDialog,
+      isUploading,
+      uploadStatus,
+      downloadDemo,
       showCreateDialog,
       showManageDialog,
       selectedFile,
+      uploadRef,
       uploadForm,
       createForm,
       questionBanks,
@@ -694,6 +1094,7 @@ export default {
       loading,
       jsonExample,
       handleFileChange,
+      handleFileRemove,
       uploadQuestionBank,
       resetUploadForm,
       resetCreateForm,
@@ -701,6 +1102,7 @@ export default {
       removeQuestion,
       addOption,
       removeOption,
+      handleAnswerChange,
       createQuestionBank,
       startPractice,
       handleCommand,
@@ -876,6 +1278,33 @@ export default {
   overflow-x: auto;
 }
 
+.upload-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px;
+  margin-bottom: 15px;
+  background: #f0f9ff;
+  border-radius: 8px;
+  border: 1px solid #b3d8ff;
+  color: #409eff;
+  font-size: 14px;
+}
+
+.upload-status .el-icon {
+  font-size: 18px;
+  animation: rotating 2s linear infinite;
+}
+
+@keyframes rotating {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .danger-item {
   color: #f56c6c;
 }
@@ -973,6 +1402,50 @@ export default {
 
 .explanation-input {
   margin-top: 8px;
+}
+
+.parse-mode-tip {
+  margin-top: 10px;
+  padding: 10px;
+  background: #f0f9ff;
+  border-radius: 4px;
+  border-left: 3px solid #409eff;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.6;
+}
+
+.parse-mode-tip strong {
+  color: #409eff;
+}
+
+.demo-download {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid #e4e7ed;
+  text-align: center;
+}
+
+.demo-download .el-button {
+  margin: 0 5px;
+}
+
+.format-text-example {
+  background: #f5f5f5;
+  padding: 15px;
+  border-radius: 8px;
+  margin: 10px 0;
+  overflow-x: auto;
+}
+
+.format-text-example pre {
+  margin: 0;
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #333;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 .add-question-btn {

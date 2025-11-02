@@ -1,5 +1,6 @@
-// API 基础配置 - 从环境变量获取
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3005/api';
+// API 基础配置 - 根据环境动态配置
+// 开发环境使用 localhost，生产环境使用相对路径（由打包脚本替换）
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:3005/api' : '/api');
 
 // 打印当前API配置（仅在开发环境）
 if (import.meta.env.DEV) {
@@ -210,6 +211,9 @@ export const adminAPI = {
   
   // 获取系统统计
   getStats: () => request('/admin/stats'),
+  
+  // 获取系统设置
+  getSettings: () => request('/admin/settings'),
   
   // 更新系统设置
   updateSettings: (data) => request('/admin/settings', {

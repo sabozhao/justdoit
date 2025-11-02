@@ -40,8 +40,9 @@ type Question struct {
 	ID          string   `json:"id" db:"id"`
 	BankID      string   `json:"bank_id" db:"bank_id"`
 	Question    string   `json:"question" db:"question"`
-	Options     []string `json:"options" db:"options"`
-	Answer      int      `json:"answer" db:"answer"`
+	Options     []string `json:"options" db:"options"` // 最多10个选项
+	Answer      []int    `json:"answer" db:"answer"`    // 支持多选，存储答案索引数组
+	IsMultiple  bool     `json:"is_multiple" db:"is_multiple"` // 是否为多选题
 	Explanation string   `json:"explanation" db:"explanation"`
 }
 
@@ -51,8 +52,9 @@ type WrongQuestion struct {
 	BankID      string    `json:"bank_id" db:"bank_id"`
 	QuestionID  string    `json:"question_id" db:"question_id"`
 	Question    string    `json:"question" db:"question"`
-	Options     []string  `json:"options" db:"options"`
-	Answer      int       `json:"answer" db:"answer"`
+	Options     []string  `json:"options" db:"options"` // 最多10个选项
+	Answer      []int     `json:"answer" db:"answer"`    // 支持多选
+	IsMultiple  bool      `json:"is_multiple" db:"is_multiple"` // 是否为多选题
 	Explanation string    `json:"explanation" db:"explanation"`
 	BankName    string    `json:"bank_name" db:"bank_name"`
 	AddedAt     time.Time `json:"added_at" db:"added_at"`
@@ -122,7 +124,84 @@ func initDB() {
 	// 创建默认管理员账号
 	createDefaultAdmin()
 
+	// 初始化系统配置表
+	initSystemSettings()
+
 	log.Println("Database initialized successfully")
+}
+
+// 初始化系统配置表
+func initSystemSettings() {
+	// 创建系统配置表
+	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS system_settings (
+		setting_key VARCHAR(255) PRIMARY KEY,
+		setting_value TEXT,
+		description VARCHAR(500),
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	)`)
+	if err != nil {
+		log.Printf("Warning: Failed to create system_settings table: %v", err)
+		return
+	}
+
+	// 初始化默认配置（如果不存在）
+	defaultSettings := map[string]string{
+		"tencent_secret_id":  getEnv("TENCENT_SECRET_ID", ""),
+		"tencent_secret_key": getEnv("TENCENT_SECRET_KEY", ""),
+		"tencent_region":     getEnv("TENCENT_REGION", "ap-beijing"),
+		"tencent_model":      getEnv("TENCENT_MODEL", "hunyuan-lite"),
+		"tencent_endpoint":   "hunyuan.tencentcloudapi.com",
+	}
+
+	for key, value := range defaultSettings {
+		var exists bool
+		err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM system_settings WHERE setting_key = ?)", key).Scan(&exists)
+		if err != nil {
+			log.Printf("Warning: Failed to check setting %s: %v", key, err)
+			continue
+		}
+		if !exists {
+			_, err = db.Exec("INSERT INTO system_settings (setting_key, setting_value, description) VALUES (?, ?, ?)",
+				key, value, getSettingDescription(key))
+			if err != nil {
+				log.Printf("Warning: Failed to insert default setting %s: %v", key, err)
+			}
+		}
+	}
+}
+
+// 获取配置项的描述
+func getSettingDescription(key string) string {
+	descriptions := map[string]string{
+		"tencent_secret_id":  "腾讯云API密钥ID（SecretId）",
+		"tencent_secret_key": "腾讯云API密钥（SecretKey）",
+		"tencent_region":     "腾讯云区域（如：ap-beijing, ap-guangzhou）",
+		"tencent_model":      "腾讯云AI模型名称（hunyuan-lite/hunyuan-pro/hunyuan-standard）",
+		"tencent_endpoint":   "腾讯云API端点地址",
+	}
+	return descriptions[key]
+}
+
+// 获取系统配置
+func getSystemSetting(key string) string {
+	var value string
+	err := db.QueryRow("SELECT setting_value FROM system_settings WHERE setting_key = ?", key).Scan(&value)
+	if err != nil {
+		// 如果从数据库获取失败，尝试从环境变量获取
+		envKey := strings.ToUpper(strings.ReplaceAll(key, "_", "_"))
+		envKey = "TENCENT_" + envKey
+		return getEnv(envKey, "")
+	}
+	return value
+}
+
+// 更新系统配置
+func updateSystemSetting(key, value string) error {
+	_, err := db.Exec(`INSERT INTO system_settings (setting_key, setting_value, description) 
+		VALUES (?, ?, ?) 
+		ON DUPLICATE KEY UPDATE setting_value = ?, description = ?`,
+		key, value, getSettingDescription(key), value, getSettingDescription(key))
+	return err
 }
 
 // 获取环境变量，如果不存在则返回默认值
@@ -213,12 +292,43 @@ func createTables() {
 		bank_id VARCHAR(255) NOT NULL,
 		question TEXT NOT NULL,
 		options JSON NOT NULL,
-		answer INT NOT NULL,
+		answer JSON NOT NULL,
+		is_multiple BOOLEAN DEFAULT 0,
 		explanation TEXT,
 		FOREIGN KEY (bank_id) REFERENCES question_banks (id) ON DELETE CASCADE
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create questions table:", err)
+	}
+
+	// 检查并升级answer字段为JSON类型（如果还是INT类型）
+	var answerColumnType string
+	err = db.QueryRow("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'questions' AND COLUMN_NAME = 'answer'").Scan(&answerColumnType)
+	if err == nil && answerColumnType == "int" {
+		log.Println("检测到answer字段为INT类型，正在升级为JSON类型...")
+		// 先备份数据，然后删除旧字段，创建新字段
+		// 注意：这会导致数据丢失，但这是必要的升级步骤
+		_, err = db.Exec("ALTER TABLE questions MODIFY COLUMN answer JSON NOT NULL")
+		if err != nil {
+			log.Printf("警告: 升级answer字段失败: %v\n", err)
+			log.Println("如果升级失败，请手动执行: ALTER TABLE questions MODIFY COLUMN answer JSON NOT NULL")
+		} else {
+			log.Println("成功升级answer字段为JSON类型")
+		}
+	}
+
+	// 检查并添加is_multiple字段（如果不存在）
+	var isMultipleExists bool
+	err = db.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'questions' AND COLUMN_NAME = 'is_multiple'").Scan(&isMultipleExists)
+	if err != nil {
+		log.Printf("Warning: Failed to check if is_multiple column exists: %v", err)
+	} else if !isMultipleExists {
+		_, err = db.Exec("ALTER TABLE questions ADD COLUMN is_multiple BOOLEAN DEFAULT 0")
+		if err != nil {
+			log.Printf("Warning: Failed to add is_multiple column: %v", err)
+		} else {
+			log.Println("Successfully added is_multiple column to questions table")
+		}
 	}
 
 	// 错题表
@@ -229,7 +339,8 @@ func createTables() {
 		question_id VARCHAR(255) NOT NULL,
 		question TEXT NOT NULL,
 		options JSON NOT NULL,
-		answer INT NOT NULL,
+		answer JSON NOT NULL,
+		is_multiple BOOLEAN DEFAULT 0,
 		explanation TEXT,
 		added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
@@ -237,6 +348,31 @@ func createTables() {
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create wrong_questions table:", err)
+	}
+
+	// 检查并升级wrong_questions表的answer字段为JSON类型
+	err = db.QueryRow("SELECT DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wrong_questions' AND COLUMN_NAME = 'answer'").Scan(&answerColumnType)
+	if err == nil && answerColumnType == "int" {
+		log.Println("检测到wrong_questions表的answer字段为INT类型，正在升级为JSON类型...")
+		_, err = db.Exec("ALTER TABLE wrong_questions MODIFY COLUMN answer JSON NOT NULL")
+		if err != nil {
+			log.Printf("警告: 升级wrong_questions表的answer字段失败: %v\n", err)
+		} else {
+			log.Println("成功升级wrong_questions表的answer字段为JSON类型")
+		}
+	}
+
+	// 检查并添加is_multiple字段（如果不存在）
+	err = db.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wrong_questions' AND COLUMN_NAME = 'is_multiple'").Scan(&isMultipleExists)
+	if err != nil {
+		log.Printf("Warning: Failed to check if is_multiple column exists in wrong_questions: %v", err)
+	} else if !isMultipleExists {
+		_, err = db.Exec("ALTER TABLE wrong_questions ADD COLUMN is_multiple BOOLEAN DEFAULT 0")
+		if err != nil {
+			log.Printf("Warning: Failed to add is_multiple column to wrong_questions: %v", err)
+		} else {
+			log.Println("Successfully added is_multiple column to wrong_questions table")
+		}
 	}
 
 	// 考试结果表
@@ -613,6 +749,35 @@ func getAdminStats(c *gin.Context) {
 	c.JSON(http.StatusOK, stats)
 }
 
+// 获取系统设置
+func getSettings(c *gin.Context) {
+	settings := make(map[string]string)
+	
+	rows, err := db.Query("SELECT setting_key, setting_value FROM system_settings")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取设置失败"})
+		return
+	}
+	defer rows.Close()
+	
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			continue
+		}
+		settings[key] = value
+	}
+	
+	// 对敏感信息进行掩码处理
+	if secretKey, ok := settings["tencent_secret_key"]; ok && secretKey != "" {
+		settings["tencent_secret_key"] = maskSecretKey(secretKey)
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"settings": settings,
+	})
+}
+
 // 更新系统设置
 func updateSettings(c *gin.Context) {
 	var settings map[string]interface{}
@@ -621,15 +786,44 @@ func updateSettings(c *gin.Context) {
 		return
 	}
 
-	// 这里可以将设置保存到数据库或配置文件中
-	// 当前简单实现：只返回成功
-	// 后续可以添加数据库存储功能
+	// 保存设置到数据库
+	for key, value := range settings {
+		valueStr := fmt.Sprintf("%v", value)
+		
+		// 对于敏感信息（secret_key），如果值是掩码格式（包含***），则不更新
+		if key == "tencent_secret_key" {
+			if valueStr == "" || strings.Contains(valueStr, "***") || len(valueStr) <= 6 {
+				continue // 跳过，不更新密钥
+			}
+		}
+		
+		err := updateSystemSetting(key, valueStr)
+		if err != nil {
+			log.Printf("Failed to update setting %s: %v", key, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("更新设置 %s 失败", key)})
+			return
+		}
+	}
+
+	// 如果更新了腾讯云配置，重新加载配置
+	tencentKeys := []string{"tencent_secret_id", "tencent_secret_key", "tencent_region", "tencent_model", "tencent_endpoint"}
+	needsReload := false
+	for _, key := range tencentKeys {
+		if _, ok := settings[key]; ok {
+			needsReload = true
+			break
+		}
+	}
+	
+	if needsReload {
+		reloadTencentCloudConfig()
+	}
 	
 	c.JSON(http.StatusOK, gin.H{
 		"message": "设置保存成功",
-		"settings": settings,
 	})
 }
+
 
 func handleOptions(c *gin.Context) {
 	c.Header("Access-Control-Allow-Origin", "http://localhost:5173")
@@ -644,9 +838,23 @@ func main() {
 		log.Println("Warning: .env file not found, using default values")
 	}
 
+	// 检查是否是调试模式（不初始化数据库，直接从环境变量读取配置）
+	if len(os.Args) > 1 && os.Args[1] == "debug-api" {
+		debugTencentAPI()
+		return
+	}
+
 	// 初始化数据库
 	initDB()
 	defer db.Close()
+
+	// 初始化腾讯云AI服务（如果配置了SecretId和SecretKey）
+	initTencentCloudAI()
+	if tencentCloudSecretId != "" && tencentCloudSecretKey != "" {
+		log.Println("AI服务已初始化（腾讯云混元大模型）")
+	} else {
+		log.Println("Warning: 腾讯云SecretId和SecretKey未配置，AI识别功能将被禁用")
+	}
 
 	// 使用setupRoutes()函数设置路由
 	r := setupRoutes()

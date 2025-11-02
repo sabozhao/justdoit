@@ -123,7 +123,7 @@ export const useExamStore = defineStore('exam', {
       }
     },
 
-    // 添加错题
+    // 添加错题（支持多选）
     async addWrongQuestion(question, bankId) {
       try {
         const wrongQuestionData = {
@@ -131,7 +131,8 @@ export const useExamStore = defineStore('exam', {
           questionId: question.id || Date.now().toString(),
           question: question.question,
           options: question.options,
-          answer: question.answer,
+          answer: question.answer, // 支持数组（多选）
+          is_multiple: question.is_multiple || false, // 传递题目类型
           explanation: question.explanation
         }
         

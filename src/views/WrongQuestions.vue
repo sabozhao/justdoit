@@ -47,14 +47,22 @@
             >
               <div class="question-header">
                 <span class="question-number">第 {{ index + 1 }} 题</span>
-                <el-button
-                  type="text"
-                  size="small"
-                  @click="removeFromWrongQuestions(question.id)"
-                >
-                  <el-icon><Close /></el-icon>
-                  移除
-                </el-button>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                  <el-tag v-if="question.is_multiple" type="warning" size="small">
+                    多选题
+                  </el-tag>
+                  <el-tag v-else type="primary" size="small">
+                    单选题
+                  </el-tag>
+                  <el-button
+                    type="text"
+                    size="small"
+                    @click="removeFromWrongQuestions(question.id)"
+                  >
+                    <el-icon><Close /></el-icon>
+                    移除
+                  </el-button>
+                </div>
               </div>
 
               <div class="question-content">
@@ -65,11 +73,11 @@
                     v-for="(option, optionIndex) in question.options"
                     :key="optionIndex"
                     class="option-item"
-                    :class="{ 'correct': optionIndex === question.answer }"
+                    :class="{ 'correct': isCorrectAnswer(question, optionIndex) }"
                   >
                     <span class="option-label">{{ String.fromCharCode(65 + optionIndex) }}</span>
                     <span class="option-text">{{ option }}</span>
-                    <el-tag v-if="optionIndex === question.answer" type="success" size="small">
+                    <el-tag v-if="isCorrectAnswer(question, optionIndex)" type="success" size="small">
                       正确答案
                     </el-tag>
                   </div>
@@ -179,6 +187,26 @@ export default {
       }
     }
 
+    // 判断是否为正确答案（支持多选）
+    const isCorrectAnswer = (question, optionIndex) => {
+      if (!question || question.answer === null || question.answer === undefined) {
+        return false
+      }
+      
+      if (question.is_multiple && Array.isArray(question.answer)) {
+        return question.answer.includes(optionIndex)
+      } else if (!question.is_multiple && !Array.isArray(question.answer)) {
+        return question.answer === optionIndex
+      }
+      
+      // 兼容旧数据：如果answer是数组但is_multiple为false，或反之
+      if (Array.isArray(question.answer)) {
+        return question.answer.includes(optionIndex)
+      } else {
+        return question.answer === optionIndex
+      }
+    }
+
     const formatDate = (dateString) => {
       return new Date(dateString).toLocaleString('zh-CN')
     }
@@ -195,7 +223,8 @@ export default {
       practiceGroupQuestions,
       removeFromWrongQuestions,
       clearAllWrongQuestions,
-      formatDate
+      formatDate,
+      isCorrectAnswer
     }
   }
 }

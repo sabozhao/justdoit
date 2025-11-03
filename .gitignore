@@ -1,0 +1,6 @@
+.env.*
+.env
+go-server/.env
+go-server/.env.*
+go-server/exam.db
+go-server/*.tar.gz

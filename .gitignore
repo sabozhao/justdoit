@@ -4,3 +4,7 @@ go-server/.env
 go-server/.env.*
 go-server/exam.db
 go-server/*.tar.gz
+
+# 包含服务器密码和敏感信息的脚本文件
+package-production-linux.sh
+package-fullstack-linux.sh

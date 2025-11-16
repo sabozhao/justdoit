@@ -40,10 +40,20 @@ type Question struct {
 	ID          string   `json:"id" db:"id"`
 	BankID      string   `json:"bank_id" db:"bank_id"`
 	Question    string   `json:"question" db:"question"`
-	Options     []string `json:"options" db:"options"` // 最多10个选项
-	Answer      []int    `json:"answer" db:"answer"`    // 支持多选，存储答案索引数组
+	Options     []string `json:"options" db:"options"` // 最多10个选项（选择题）或["错误", "正确"]（判断题）
+	Answer      []int    `json:"answer" db:"answer"`    // 支持多选，存储答案索引数组。判断题：0=错误，1=正确
 	IsMultiple  bool     `json:"is_multiple" db:"is_multiple"` // 是否为多选题
+	Type        string   `json:"type" db:"type"`        // 题目类型：choice（选择题）或judgment（判断题）
 	Explanation string   `json:"explanation" db:"explanation"`
+}
+
+// ErrorQuestion 报错的题目信息
+type ErrorQuestion struct {
+	Question    string   `json:"question"`
+	Options     []string `json:"options"`
+	Answer      []string `json:"answer"`
+	Explanation string   `json:"explanation"`
+	ErrorReason string   `json:"error_reason"`
 }
 
 type WrongQuestion struct {
@@ -55,6 +65,7 @@ type WrongQuestion struct {
 	Options     []string  `json:"options" db:"options"` // 最多10个选项
 	Answer      []int     `json:"answer" db:"answer"`    // 支持多选
 	IsMultiple  bool      `json:"is_multiple" db:"is_multiple"` // 是否为多选题
+	Type        string    `json:"type" db:"type"`        // 题目类型：choice（选择题）或judgment（判断题）
 	Explanation string    `json:"explanation" db:"explanation"`
 	BankName    string    `json:"bank_name" db:"bank_name"`
 	AddedAt     time.Time `json:"added_at" db:"added_at"`
@@ -294,11 +305,25 @@ func createTables() {
 		options JSON NOT NULL,
 		answer JSON NOT NULL,
 		is_multiple BOOLEAN DEFAULT 0,
+		type VARCHAR(20) DEFAULT 'choice',
 		explanation TEXT,
 		FOREIGN KEY (bank_id) REFERENCES question_banks (id) ON DELETE CASCADE
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create questions table:", err)
+	}
+
+	// 检查并添加type字段（如果不存在）
+	var typeColumnCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'questions' AND COLUMN_NAME = 'type'").Scan(&typeColumnCount)
+	if err == nil && typeColumnCount == 0 {
+		log.Println("检测到questions表缺少type字段，正在添加...")
+		_, err = db.Exec("ALTER TABLE questions ADD COLUMN type VARCHAR(20) DEFAULT 'choice'")
+		if err != nil {
+			log.Printf("添加type字段失败: %v", err)
+		} else {
+			log.Println("type字段添加成功")
+		}
 	}
 
 	// 检查并升级answer字段为JSON类型（如果还是INT类型）
@@ -372,6 +397,20 @@ func createTables() {
 			log.Printf("Warning: Failed to add is_multiple column to wrong_questions: %v", err)
 		} else {
 			log.Println("Successfully added is_multiple column to wrong_questions table")
+		}
+	}
+
+	// 检查并添加type字段（如果不存在）
+	var typeExists bool
+	err = db.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'wrong_questions' AND COLUMN_NAME = 'type'").Scan(&typeExists)
+	if err != nil {
+		log.Printf("Warning: Failed to check if type column exists in wrong_questions: %v", err)
+	} else if !typeExists {
+		_, err = db.Exec("ALTER TABLE wrong_questions ADD COLUMN type VARCHAR(20) DEFAULT 'choice'")
+		if err != nil {
+			log.Printf("Warning: Failed to add type column to wrong_questions: %v", err)
+		} else {
+			log.Println("Successfully added type column to wrong_questions table")
 		}
 	}
 

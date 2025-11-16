@@ -14,47 +14,17 @@
       </div>
     </div>
 
-    <!-- 题目导航 -->
-    <div class="question-navigator" v-if="!showResult">
-      <div class="navigator-header">
-        <h3>题目导航</h3>
-        <span class="legend">
-          <span class="legend-item">
-            <span class="legend-dot completed"></span>
-            已完成
-          </span>
-          <span class="legend-item">
-            <span class="legend-dot current"></span>
-            当前题目
-          </span>
-          <span class="legend-item">
-            <span class="legend-dot"></span>
-            未完成
-          </span>
-        </span>
-      </div>
-      <div class="navigator-grid">
-        <div
-          v-for="(question, index) in questions"
-          :key="index"
-          class="question-nav-item"
-          :class="{
-            'completed': userAnswers[index] !== null,
-            'current': index === currentQuestionIndex
-          }"
-          @click="jumpToQuestion(index)"
-        >
-          {{ index + 1 }}
-        </div>
-      </div>
-    </div>
-
-    <!-- 答题界面 -->
-    <div class="exam-content" v-if="!showResult && currentQuestion">
+    <!-- 主要内容区域：左侧答题界面 + 右侧题目导航 -->
+    <div class="exam-main-container" v-if="!showResult">
+      <!-- 答题界面 -->
+      <div class="exam-content" v-if="currentQuestion">
       <el-card class="question-card">
         <div class="question-header">
           <span class="question-number">第 {{ currentQuestionIndex + 1 }} 题</span>
-          <el-tag v-if="currentQuestion.is_multiple" type="warning" size="small" style="margin-left: 10px;">
+          <el-tag v-if="currentQuestion.type === 'judgment'" type="info" size="small" style="margin-left: 10px;">
+            判断题
+          </el-tag>
+          <el-tag v-else-if="currentQuestion.is_multiple" type="warning" size="small" style="margin-left: 10px;">
             多选题
           </el-tag>
           <el-tag v-else type="primary" size="small" style="margin-left: 10px;">
@@ -135,6 +105,95 @@
           </el-button>
         </div>
       </el-card>
+      </div>
+
+      <!-- 题目导航 -->
+      <div class="question-navigator" v-if="!showResult">
+        <div class="navigator-header">
+          <h3>题目导航</h3>
+          <span class="legend">
+            <span class="legend-item">
+              <span class="legend-dot completed"></span>
+              已完成
+            </span>
+            <span class="legend-item">
+              <span class="legend-dot current"></span>
+              当前题目
+            </span>
+            <span class="legend-item">
+              <span class="legend-dot"></span>
+              未完成
+            </span>
+          </span>
+        </div>
+        <div class="navigator-grid">
+          <!-- 判断题分组 -->
+          <template v-if="groupedQuestions.judgment.length > 0">
+            <div class="question-group-header">判断题</div>
+            <div class="question-group-items">
+              <div
+                v-for="(question, index) in groupedQuestions.judgment"
+                :key="'judgment-' + index"
+                class="question-nav-item"
+                :class="{
+                  'completed': userAnswers[question.originalIndex] !== null,
+                  'current': question.originalIndex === currentQuestionIndex
+                }"
+                @click="jumpToQuestion(question.originalIndex)"
+              >
+                <div class="question-nav-number">{{ question.originalIndex + 1 }}</div>
+                <div class="question-nav-type">
+                  <span class="type-tag type-judgment">判</span>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 单选题分组 -->
+          <template v-if="groupedQuestions.single.length > 0">
+            <div class="question-group-header">单选题</div>
+            <div class="question-group-items">
+              <div
+                v-for="(question, index) in groupedQuestions.single"
+                :key="'single-' + index"
+                class="question-nav-item"
+                :class="{
+                  'completed': userAnswers[question.originalIndex] !== null,
+                  'current': question.originalIndex === currentQuestionIndex
+                }"
+                @click="jumpToQuestion(question.originalIndex)"
+              >
+                <div class="question-nav-number">{{ question.originalIndex + 1 }}</div>
+                <div class="question-nav-type">
+                  <span class="type-tag type-single">单</span>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 多选题分组 -->
+          <template v-if="groupedQuestions.multiple.length > 0">
+            <div class="question-group-header">多选题</div>
+            <div class="question-group-items">
+              <div
+                v-for="(question, index) in groupedQuestions.multiple"
+                :key="'multiple-' + index"
+                class="question-nav-item"
+                :class="{
+                  'completed': userAnswers[question.originalIndex] !== null,
+                  'current': question.originalIndex === currentQuestionIndex
+                }"
+                @click="jumpToQuestion(question.originalIndex)"
+              >
+                <div class="question-nav-number">{{ question.originalIndex + 1 }}</div>
+                <div class="question-nav-type">
+                  <span class="type-tag type-multiple">多</span>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
     </div>
 
     <!-- 结果页面 -->
@@ -186,7 +245,10 @@
           </div> -->
           <div class="review-header">
             <span class="review-number">第 {{ index + 1 }} 题</span>
-            <el-tag v-if="question.is_multiple" type="warning" size="small" style="margin-right: 10px;">
+            <el-tag v-if="question.type === 'judgment'" type="info" size="small" style="margin-right: 10px;">
+              判断题
+            </el-tag>
+            <el-tag v-else-if="question.is_multiple" type="warning" size="small" style="margin-right: 10px;">
               多选题
             </el-tag>
             <el-tag :type="isAnswerCorrect(index) ? 'success' : 'danger'">
@@ -263,7 +325,7 @@ export default {
     const timer = ref(null)
 
     const examTitle = computed(() => {
-      if (route.name === 'WrongQuestionsExam' || route.params.id.startsWith('wrong-questions')) {
+      if (route.name === 'WrongQuestionsExam' || (route.params.id && route.params.id.startsWith('wrong-questions'))) {
         return '错题练习'
       }
       const bank = examStore.getQuestionBankById(route.params.id)
@@ -334,6 +396,38 @@ export default {
 
     const resultIconClass = computed(() => {
       return score.value >= 80 ? 'success' : score.value >= 60 ? 'warning' : 'error'
+    })
+
+    // 按类型分组的题目
+    const groupedQuestions = computed(() => {
+      const groups = {
+        judgment: [],
+        single: [],
+        multiple: []
+      }
+
+      if (!questions.value || questions.value.length === 0) {
+        return groups
+      }
+
+      questions.value.forEach((question, index) => {
+        if (!question) return
+        
+        const questionWithIndex = {
+          ...question,
+          originalIndex: index
+        }
+
+        if (question.type === 'judgment') {
+          groups.judgment.push(questionWithIndex)
+        } else if (question.is_multiple) {
+          groups.multiple.push(questionWithIndex)
+        } else {
+          groups.single.push(questionWithIndex)
+        }
+      })
+
+      return groups
     })
 
     const initExam = async () => {
@@ -613,12 +707,33 @@ export default {
         }
       }
 
-      // 保存错题（支持多选）
+      // 保存错题（批量上报）
       if (route.params.id !== 'wrong-questions' && !route.params.id.startsWith('wrong-questions') && route.name !== 'WrongQuestionsExam') {
+        // 收集所有错题
+        const wrongQuestions = []
         for (let index = 0; index < questions.value.length; index++) {
           const question = questions.value[index]
           if (!isAnswerCorrect(index)) {
-            await examStore.addWrongQuestion(question, route.params.id)
+            wrongQuestions.push(question)
+          }
+        }
+        
+        // 如果有错题，批量上报
+        if (wrongQuestions.length > 0) {
+          const loadingMessage = ElMessage({
+            message: '正在更新错题集...',
+            type: 'info',
+            duration: 0, // 不自动关闭
+            showClose: false
+          })
+          
+          try {
+            await examStore.addWrongQuestionsBatch(wrongQuestions, route.params.id)
+            loadingMessage.close()
+            ElMessage.success(`已更新错题集，共 ${wrongQuestions.length} 道错题`)
+          } catch (error) {
+            loadingMessage.close()
+            // 错误信息已在store中显示
           }
         }
       } else if ((route.params.id && route.params.id.startsWith('wrong-questions') && !route.params.id.includes('/')) || route.name === 'WrongQuestionsExam') {
@@ -803,6 +918,7 @@ export default {
       score,
       resultIcon,
       resultIconClass,
+      groupedQuestions,
       selectAnswer,
       toggleAnswer,
       isOptionSelected,
@@ -833,6 +949,9 @@ export default {
   flex-direction: column;
   position: relative;
   contain: layout style;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
 }
 
 .exam-header {
@@ -901,14 +1020,13 @@ export default {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 15px;
   padding: 20px;
-  margin-bottom: 30px;
   backdrop-filter: blur(10px);
-  height: 200px !important;
-  max-height: 200px !important;
-  min-height: 200px !important;
-  width: 100% !important;
-  min-width: 100% !important;
-  max-width: 100% !important;
+  width: 280px !important;
+  min-width: 280px !important;
+  max-width: 280px !important;
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
   box-sizing: border-box;
   display: flex !important;
   flex-direction: column !important;
@@ -919,8 +1037,10 @@ export default {
   z-index: 1;
   contain: layout size style;
   will-change: auto;
-  margin-top: 0 !important;
+  margin: 0 !important;
   clear: both;
+  visibility: visible !important;
+  opacity: 1 !important;
 }
 
 .navigator-header {
@@ -990,38 +1110,57 @@ export default {
 }
 
 .navigator-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
-  gap: 8px;
-  flex: 0 0 auto !important;
-  flex-shrink: 0 !important;
-  flex-grow: 0 !important;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100% !important;
   min-width: 100% !important;
   max-width: 100% !important;
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 0;
-  max-height: calc(200px - 40px - 15px - 40px) !important; /* 总高度200px - header高度40px - header margin-bottom 15px - padding 40px(上下各20px) */
-  height: calc(200px - 40px - 15px - 40px) !important;
   box-sizing: border-box;
   position: relative;
   contain: layout size style;
+  -webkit-overflow-scrolling: touch;
+}
+
+.question-group-header {
+  font-size: 12px;
+  font-weight: bold;
+  color: rgba(255, 255, 255, 0.9);
+  padding: 4px 0 2px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
+.question-group-items {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 3px;
+  margin-bottom: 6px;
 }
 
 .question-nav-item {
-  width: 40px;
-  height: 40px;
-  border-radius: 8px;
+  width: 100%;
+  aspect-ratio: 1;
+  min-width: 0;
+  max-width: 100%;
+  border-radius: 3px;
   background: rgba(255, 255, 255, 0.2);
   color: white;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: 1px;
+  box-sizing: border-box;
   cursor: pointer;
   transition: all 0.3s ease;
   font-weight: 500;
-  border: 2px solid transparent;
+  border: 1px solid transparent;
 }
 
 .question-nav-item:hover {
@@ -1046,10 +1185,56 @@ export default {
   border-color: #67c23a;
 }
 
-.exam-content {
+.question-nav-number {
+  font-size: 10px;
+  font-weight: bold;
+  line-height: 1;
+}
+
+.question-nav-type {
+  margin-top: 0px;
+  line-height: 1;
+}
+
+.type-tag {
+  display: inline-block;
+  font-size: 7px;
+  padding: 0px 1px;
+  border-radius: 2px;
+  font-weight: bold;
+  background: rgba(255, 255, 255, 0.3);
+  color: white;
+}
+
+.type-tag.type-single {
+  background: rgba(64, 158, 255, 0.8);
+}
+
+.type-tag.type-multiple {
+  background: rgba(230, 162, 60, 0.8);
+}
+
+.type-tag.type-judgment {
+  background: rgba(144, 147, 153, 0.8);
+}
+
+.exam-main-container {
+  display: flex;
+  flex-direction: row;
+  gap: 20px;
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
+  overflow: hidden;
+  position: relative;
+  height: calc(100vh - 220px);
+  max-height: calc(100vh - 220px);
+}
+
+.exam-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
   position: relative;
   z-index: 0;
   overflow-y: auto;

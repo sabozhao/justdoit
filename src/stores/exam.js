@@ -133,6 +133,7 @@ export const useExamStore = defineStore('exam', {
           options: question.options,
           answer: question.answer, // 支持数组（多选）
           is_multiple: question.is_multiple || false, // 传递题目类型
+          type: question.type || 'choice', // 传递题目类型（选择题或判断题）
           explanation: question.explanation
         }
         
@@ -144,6 +145,30 @@ export const useExamStore = defineStore('exam', {
           ElMessage.error('添加错题失败: ' + error.message)
         }
         console.error('Failed to add wrong question:', error)
+      }
+    },
+
+    // 批量添加错题
+    async addWrongQuestionsBatch(questions, bankId) {
+      try {
+        const wrongQuestionsData = questions.map(question => ({
+          bankId,
+          questionId: question.id || Date.now().toString(),
+          question: question.question,
+          options: question.options,
+          answer: question.answer, // 支持数组（多选）
+          is_multiple: question.is_multiple || false, // 传递题目类型
+          type: question.type || 'choice', // 传递题目类型（选择题或判断题）
+          explanation: question.explanation || ''
+        }))
+        
+        const result = await wrongQuestionAPI.addBatch({ questions: wrongQuestionsData })
+        await this.loadWrongQuestions() // 重新加载错题列表
+        return result
+      } catch (error) {
+        ElMessage.error('批量添加错题失败: ' + error.message)
+        console.error('Failed to add wrong questions batch:', error)
+        throw error
       }
     },
 

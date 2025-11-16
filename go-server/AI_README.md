@@ -113,8 +113,49 @@ cd go-server
 ## 技术实现
 
 - **PDF 解析**: 使用 `github.com/gen2brain/go-fitz` (MuPDF)
-- **DOCX 解析**: 使用 `github.com/unidoc/unioffice`
+- **DOCX 解析**: 直接解析 ZIP 压缩的 XML 文件
+- **DOC 解析**: 使用 LibreOffice 命令行工具（需要安装 LibreOffice）
 - **AI 服务**: 使用腾讯云混元大模型 API（免费7B版本）
+
+## DOC 文件支持说明
+
+系统支持 `.doc` 文件格式，但需要服务器安装 **LibreOffice**。
+
+### 安装 LibreOffice
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get update
+sudo apt-get install libreoffice
+```
+
+**CentOS/RHEL:**
+```bash
+sudo yum install libreoffice
+# 或
+sudo dnf install libreoffice
+```
+
+**macOS:**
+```bash
+brew install --cask libreoffice
+```
+
+**Windows:**
+从 [LibreOffice 官网](https://www.libreoffice.org/download/) 下载安装程序。
+
+### 验证安装
+
+安装完成后，可以通过以下命令验证：
+```bash
+libreoffice --version
+# 或
+soffice --version
+```
+
+如果系统未安装 LibreOffice，上传 `.doc` 文件时会提示错误。建议：
+1. 在服务器上安装 LibreOffice
+2. 或者将 `.doc` 文件转换为 `.docx` 格式后再上传
 
 ## API 调用说明
 

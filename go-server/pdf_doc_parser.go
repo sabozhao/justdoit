@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gen2brain/go-fitz"
+	"os/exec"
 )
 
 // 解析PDF文件并提取文本
@@ -150,9 +151,9 @@ func parseDOCFile(file multipart.File, header *multipart.FileHeader) (string, er
 		return text, nil
 	}
 
-	// 对于旧版DOC格式，返回错误提示
+	// 解析旧版DOC格式（使用LibreOffice命令行工具）
 	if ext == ".doc" {
-		return "", fmt.Errorf("旧版DOC格式(.doc)暂不支持，请将文件转换为DOCX格式")
+		return parseDOCFileWithLibreOffice(tempFile.Name())
 	}
 
 	return "", fmt.Errorf("不支持的文件格式: %s", ext)
@@ -346,4 +347,78 @@ func extractTextFromXMLStrict(xmlContent string) string {
 	log.Printf("严格提取完成: 找到 %d 个文本块，总长度: %d 字符", textCount, len(result))
 	return result
 }
+
+// parseDOCFileWithLibreOffice 使用LibreOffice命令行工具解析DOC文件
+func parseDOCFileWithLibreOffice(filePath string) (string, error) {
+	log.Printf("开始使用LibreOffice解析DOC文件: %s", filePath)
+	
+	// 检查LibreOffice是否安装
+	libreOfficeCmd := "libreoffice"
+	if _, err := exec.LookPath(libreOfficeCmd); err != nil {
+		log.Printf("LibreOffice未安装，尝试使用soffice命令")
+		libreOfficeCmd = "soffice"
+		if _, err := exec.LookPath(libreOfficeCmd); err != nil {
+			return "", fmt.Errorf("系统未安装LibreOffice。请安装LibreOffice，或先将DOC文件转换为DOCX格式再上传")
+		}
+	}
+	
+	// 创建临时输出目录
+	tempDir, err := os.MkdirTemp("", "libreoffice-convert-*")
+	if err != nil {
+		return "", fmt.Errorf("创建临时目录失败: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+	
+	// 使用LibreOffice将DOC转换为文本格式
+	// --headless: 无界面模式
+	// --convert-to txt: 转换为文本格式
+	// --outdir: 输出目录
+	cmd := exec.Command(libreOfficeCmd, "--headless", "--convert-to", "txt", "--outdir", tempDir, filePath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("LibreOffice转换失败: %v, 输出: %s", err, string(output))
+		return "", fmt.Errorf("LibreOffice转换失败: %v。请确保LibreOffice已正确安装", err)
+	}
+	
+	// 查找生成的txt文件
+	baseName := strings.TrimSuffix(filepath.Base(filePath), filepath.Ext(filePath))
+	txtFilePath := filepath.Join(tempDir, baseName+".txt")
+	
+	// 检查文件是否存在
+	if _, err := os.Stat(txtFilePath); os.IsNotExist(err) {
+		// 尝试查找任何txt文件
+		files, err := os.ReadDir(tempDir)
+		if err != nil {
+			return "", fmt.Errorf("读取输出目录失败: %v", err)
+		}
+		found := false
+		for _, file := range files {
+			if strings.HasSuffix(strings.ToLower(file.Name()), ".txt") {
+				txtFilePath = filepath.Join(tempDir, file.Name())
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("LibreOffice转换后未找到文本文件")
+		}
+	}
+	
+	// 读取文本文件内容
+	textBytes, err := os.ReadFile(txtFilePath)
+	if err != nil {
+		return "", fmt.Errorf("读取转换后的文本文件失败: %v", err)
+	}
+	
+	text := string(textBytes)
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("DOC文件中未找到文本内容")
+	}
+	
+	log.Printf("DOC文件提取的文本长度: %d 字符", len(text))
+	log.Printf("DOC文件提取的文本内容（前500字符）: %s", truncateStringForLog(text, 500))
+	
+	return text, nil
+}
+
 

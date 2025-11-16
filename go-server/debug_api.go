@@ -79,7 +79,7 @@ func debugTencentAPI() {
 
 	// 调用API
 	fmt.Println("步骤 2: 调用腾讯云混元API（使用官方SDK）...")
-	response, err := callTencentCloudAPI(prompt)
+	response, err := callTencentCloudAPI(prompt, []string{})
 	if err != nil {
 		fmt.Printf("❌ 错误: %v\n", err)
 		return

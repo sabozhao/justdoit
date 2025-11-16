@@ -85,6 +85,27 @@ go build -o exam-server *.go
 
 ## 文件格式支持
 
+### 支持的文件格式
+
+- **JSON** (.json) - 传统解析方式
+- **Excel** (.xlsx, .xls) - 传统解析方式
+- **CSV** (.csv) - 传统解析方式
+- **PDF** (.pdf) - 使用 AI 自动识别（需要 MuPDF 库）
+- **DOCX** (.docx) - 使用 AI 自动识别
+- **DOC** (.doc) - 使用 AI 自动识别（需要安装 LibreOffice）
+
+### DOC 文件支持
+
+系统支持 `.doc` 文件格式，但需要服务器安装 **LibreOffice**。
+
+**安装 LibreOffice:**
+- Ubuntu/Debian: `sudo apt-get install libreoffice`
+- CentOS/RHEL: `sudo yum install libreoffice`
+- macOS: `brew install --cask libreoffice`
+- Windows: 从 [官网](https://www.libreoffice.org/download/) 下载安装
+
+如果未安装 LibreOffice，建议将 `.doc` 文件转换为 `.docx` 格式后再上传。
+
 ### Excel/CSV 格式要求
 
 支持以下列名（中英文均可）：

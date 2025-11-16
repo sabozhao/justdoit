@@ -74,6 +74,7 @@ func setupRoutes() *gin.Engine {
 	{
 		wrongQuestions.GET("", getWrongQuestions)
 		wrongQuestions.POST("", addWrongQuestion)
+		wrongQuestions.POST("/batch", addWrongQuestionsBatch)
 		wrongQuestions.DELETE("/:id", removeWrongQuestion)
 		wrongQuestions.DELETE("", clearAllWrongQuestions)
 	}

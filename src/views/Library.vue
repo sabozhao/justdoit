@@ -103,6 +103,7 @@
             accept=".xlsx,.xls,.csv,.pdf,.doc,.docx"
             :on-change="handleFileChange"
             :on-remove="handleFileRemove"
+            :on-exceed="handleFileExceed"
           >
             <el-button type="primary">选择文件</el-button>
             <template #tip>
@@ -361,11 +362,15 @@ D. 选项D
               </div>
               <el-input v-model="question.question" placeholder="请输入题目内容" class="question-input" />
               <div style="margin: 10px 0;">
-                <span style="margin-right: 10px; color: #909399; font-size: 12px;">
+                <el-radio-group v-model="question.type" size="small" @change="handleCreateFormQuestionTypeChange(index)">
+                  <el-radio label="choice">选择题</el-radio>
+                  <el-radio label="judgment">判断题</el-radio>
+                </el-radio-group>
+                <span v-if="question.type === 'choice'" style="margin-left: 10px; color: #909399; font-size: 12px;">
                   提示：选择单个答案为单选题，选择多个答案为多选题
                 </span>
               </div>
-              <div class="options-container">
+              <div v-if="question.type === 'choice'" class="options-container">
                 <div v-for="(option, optionIndex) in question.options" :key="optionIndex" class="option-item">
                   <span class="option-label">{{ String.fromCharCode(65 + optionIndex) }}:</span>
                   <el-input v-model="question.options[optionIndex]" placeholder="请输入选项内容" />
@@ -382,22 +387,31 @@ D. 选项D
               </div>
               <div class="answer-container">
                 <span>正确答案：</span>
-                <!-- 使用checkbox组，支持单选和多选 -->
-                <el-checkbox-group v-model="question.answer" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;" @change="handleAnswerChange(index)">
-                  <el-checkbox
-                    v-for="(option, optionIndex) in question.options"
-                    :key="optionIndex"
-                    :label="optionIndex"
-                    :disabled="!option.trim()"
-                  >
-                    {{ String.fromCharCode(65 + optionIndex) }}. {{ option || `选项 ${String.fromCharCode(65 + optionIndex)}` }}
-                  </el-checkbox>
-                </el-checkbox-group>
-                <div v-if="!Array.isArray(question.answer) || question.answer.length === 0" style="color: #f56c6c; font-size: 12px; margin-top: 8px;">
-                  请至少选择一个正确答案
+                <!-- 判断题答案选择 -->
+                <div v-if="question.type === 'judgment'">
+                  <el-radio-group v-model="question.answer" style="margin-top: 8px;">
+                    <el-radio :label="0">错误</el-radio>
+                    <el-radio :label="1">正确</el-radio>
+                  </el-radio-group>
                 </div>
-                <div v-else style="color: #409eff; font-size: 12px; margin-top: 8px;">
-                  {{ question.answer.length === 1 ? '单选题（1个答案）' : `多选题（${question.answer.length}个答案）` }}
+                <!-- 选择题答案选择：使用checkbox组，支持单选和多选 -->
+                <div v-else>
+                  <el-checkbox-group v-model="question.answer" style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;" @change="handleAnswerChange(index)">
+                    <el-checkbox
+                      v-for="(option, optionIndex) in question.options"
+                      :key="optionIndex"
+                      :label="optionIndex"
+                      :disabled="!option.trim()"
+                    >
+                      {{ String.fromCharCode(65 + optionIndex) }}. {{ option || `选项 ${String.fromCharCode(65 + optionIndex)}` }}
+                    </el-checkbox>
+                  </el-checkbox-group>
+                  <div v-if="!Array.isArray(question.answer) || question.answer.length === 0" style="color: #f56c6c; font-size: 12px; margin-top: 8px;">
+                    请至少选择一个正确答案
+                  </div>
+                  <div v-else style="color: #409eff; font-size: 12px; margin-top: 8px;">
+                    {{ question.answer.length === 1 ? '单选题（1个答案）' : `多选题（${question.answer.length}个答案）` }}
+                  </div>
                 </div>
               </div>
               <el-input v-model="question.explanation" placeholder="答案解析（可选）" class="explanation-input" />
@@ -472,14 +486,26 @@ D. 选项D
         <el-form-item label="题目内容">
           <el-input v-model="currentQuestion.question" type="textarea" :rows="3" placeholder="请输入题目内容" />
         </el-form-item>
-        <el-form-item label="选项">
+        <el-form-item label="题目类型">
+          <el-radio-group v-model="currentQuestion.type" @change="handleQuestionTypeChange">
+            <el-radio label="choice">选择题</el-radio>
+            <el-radio label="judgment">判断题</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="选项" v-if="currentQuestion.type === 'choice'">
           <div v-for="(option, index) in currentQuestion.options" :key="index" style="margin-bottom: 10px;">
             <el-input v-model="currentQuestion.options[index]" :placeholder="`选项 ${String.fromCharCode(65 + index)}`">
               <template #prepend>{{ String.fromCharCode(65 + index) }}</template>
             </el-input>
           </div>
         </el-form-item>
-        <el-form-item label="正确答案">
+        <el-form-item v-if="currentQuestion.type === 'judgment'" label="正确答案">
+          <el-radio-group v-model="currentQuestion.answer">
+            <el-radio :label="0">错误</el-radio>
+            <el-radio :label="1">正确</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-else label="正确答案">
           <el-select v-model="currentQuestion.answer">
             <el-option v-for="(option, index) in currentQuestion.options" 
                        :key="index" 
@@ -546,6 +572,7 @@ export default {
           question: '',
           options: ['', ''],
           answer: [], // 答案数组，空数组表示未选择，根据数组长度自动判断单选/多选
+          type: 'choice', // 题目类型：choice（选择题）或judgment（判断题）
           explanation: ''
         }
       ]
@@ -560,6 +587,7 @@ export default {
       question: '',
       options: ['', '', '', ''],
       answer: 0,
+      type: 'choice', // 题目类型：choice（选择题）或judgment（判断题）
       explanation: ''
     })
 
@@ -591,12 +619,59 @@ export default {
   ]
 }`
 
-    const handleFileChange = (file) => {
-      selectedFile.value = file
+    const handleFileChange = (file, fileList) => {
+      // 处理文件变化，支持文件替换
+      // fileList 是当前文件列表，file 是当前变化的文件
+      if (fileList && fileList.length > 0) {
+        // 获取文件列表中的最后一个文件（最新选择的文件）
+        const latestFile = fileList[fileList.length - 1]
+        selectedFile.value = latestFile
+      } else if (file) {
+        // 如果文件列表为空但有文件对象，使用该文件
+        selectedFile.value = file
+      } else {
+        // 如果都没有，清空
+        selectedFile.value = null
+      }
     }
 
-    const handleFileRemove = () => {
-      selectedFile.value = null
+    const handleFileRemove = (file, fileList) => {
+      // 如果文件列表为空，清空selectedFile
+      if (!fileList || fileList.length === 0) {
+        selectedFile.value = null
+      } else {
+        // 如果还有文件，使用最新的文件
+        selectedFile.value = fileList[fileList.length - 1]
+      }
+    }
+
+    // 处理文件超出限制的情况（当limit=1时，选择新文件会触发此事件）
+    const handleFileExceed = (files, fileList) => {
+      // 当选择新文件时，自动替换旧文件
+      // Element Plus的upload组件在limit=1时会自动替换，我们只需要更新selectedFile
+      if (files && files.length > 0) {
+        const newFile = files[0]
+        // 先清空文件列表
+        if (uploadRef.value) {
+          uploadRef.value.clearFiles()
+        }
+        // 更新selectedFile为新文件
+        selectedFile.value = newFile
+        // 延迟添加新文件，确保清空操作完成
+        setTimeout(() => {
+          if (uploadRef.value) {
+            // Element Plus的upload组件支持handleStart方法添加文件
+            try {
+              if (uploadRef.value.handleStart) {
+                uploadRef.value.handleStart(newFile)
+              }
+            } catch (e) {
+              // 如果handleStart不存在，通过on-change事件会自动处理
+              console.log('文件替换:', newFile.name)
+            }
+          }
+        }, 50)
+      }
     }
 
     const uploadQuestionBank = async () => {
@@ -763,6 +838,7 @@ export default {
           question: '',
           options: ['', ''],
           answer: [], // 答案数组，空数组表示未选择
+          type: 'choice', // 题目类型：choice（选择题）或judgment（判断题）
           explanation: ''
         }
       ]
@@ -773,8 +849,28 @@ export default {
         question: '',
         options: ['', ''],
         answer: [], // 答案数组，空数组表示未选择
+        type: 'choice', // 题目类型：choice（选择题）或judgment（判断题）
         explanation: ''
       })
+    }
+
+    // 处理手动创建题库中的题目类型变化
+    const handleCreateFormQuestionTypeChange = (questionIndex) => {
+      const question = createForm.questions[questionIndex]
+      if (!question) return
+      
+      if (question.type === 'judgment') {
+        // 判断题：选项固定为["错误", "正确"]，答案默认为0（错误）
+        question.options = ['错误', '正确']
+        question.answer = 0
+      } else {
+        // 选择题：恢复选项编辑功能，至少2个选项
+        if (question.options.length < 2) {
+          question.options = ['', '']
+        }
+        // 重置答案
+        question.answer = []
+      }
     }
 
     // 处理答案变化（单选/多选自动判断）
@@ -839,60 +935,72 @@ export default {
             throw new Error(`第${index + 1}题的题目不能为空`)
           }
           
-          // 验证选项
-          if (!q.options || !Array.isArray(q.options) || q.options.length === 0) {
-            throw new Error(`第${index + 1}题至少需要2个选项`)
-          }
-          
-          // 过滤空选项，保留有效选项和索引映射
-          const validOptions = []
-          const indexMap = []
-          for (let i = 0; i < q.options.length; i++) {
-            if (q.options[i] && q.options[i].trim()) {
-              indexMap[i] = validOptions.length
-              validOptions.push(q.options[i].trim())
-            }
-          }
-          
-          if (validOptions.length < 2) {
-            throw new Error(`第${index + 1}题至少需要2个有效选项`)
-          }
-          
-          // 验证和转换答案：从原始索引转换为有效选项的索引（答案始终是数组格式）
+          const questionType = q.type || 'choice'
+          let validOptions = []
           let answer = []
-          if (!Array.isArray(q.answer)) {
-            // 兼容旧数据：如果是单个数字，转换为数组
-            if (q.answer !== null && q.answer !== undefined) {
-              const originalIdx = typeof q.answer === 'number' ? q.answer : parseInt(q.answer)
-              if (isNaN(originalIdx)) {
-                throw new Error(`第${index + 1}题的答案格式无效`)
+          
+          if (questionType === 'judgment') {
+            // 判断题：选项固定为["错误", "正确"]，答案：0=错误，1=正确
+            validOptions = ['错误', '正确']
+            const answerValue = q.answer
+            if (answerValue !== 0 && answerValue !== 1) {
+              throw new Error(`第${index + 1}题（判断题）答案必须是0（错误）或1（正确）`)
+            }
+            answer = [answerValue]
+          } else {
+            // 选择题：验证选项
+            if (!q.options || !Array.isArray(q.options) || q.options.length === 0) {
+              throw new Error(`第${index + 1}题至少需要2个选项`)
+            }
+            
+            // 过滤空选项，保留有效选项和索引映射
+            const indexMap = []
+            for (let i = 0; i < q.options.length; i++) {
+              if (q.options[i] && q.options[i].trim()) {
+                indexMap[i] = validOptions.length
+                validOptions.push(q.options[i].trim())
               }
-              if (originalIdx >= 0 && originalIdx < indexMap.length && indexMap[originalIdx] !== undefined) {
-                answer = [indexMap[originalIdx]]
+            }
+            
+            if (validOptions.length < 2) {
+              throw new Error(`第${index + 1}题至少需要2个有效选项`)
+            }
+            
+            // 验证和转换答案：从原始索引转换为有效选项的索引（答案始终是数组格式）
+            if (!Array.isArray(q.answer)) {
+              // 兼容旧数据：如果是单个数字，转换为数组
+              if (q.answer !== null && q.answer !== undefined) {
+                const originalIdx = typeof q.answer === 'number' ? q.answer : parseInt(q.answer)
+                if (isNaN(originalIdx)) {
+                  throw new Error(`第${index + 1}题的答案格式无效`)
+                }
+                if (originalIdx >= 0 && originalIdx < indexMap.length && indexMap[originalIdx] !== undefined) {
+                  answer = [indexMap[originalIdx]]
+                } else {
+                  throw new Error(`第${index + 1}题的答案索引无效（可能对应空选项）`)
+                }
               } else {
+                throw new Error(`第${index + 1}题必须选择正确答案`)
+              }
+            } else if (q.answer.length > 0) {
+              // 答案已经是数组，转换索引
+              for (const originalIdx of q.answer) {
+                if (typeof originalIdx !== 'number' || isNaN(originalIdx)) {
+                  continue // 跳过无效的索引
+                }
+                if (originalIdx >= 0 && originalIdx < indexMap.length && indexMap[originalIdx] !== undefined) {
+                  const newIdx = indexMap[originalIdx]
+                  if (!answer.includes(newIdx)) {
+                    answer.push(newIdx)
+                  }
+                }
+              }
+              if (answer.length === 0) {
                 throw new Error(`第${index + 1}题的答案索引无效（可能对应空选项）`)
               }
             } else {
-              throw new Error(`第${index + 1}题必须选择正确答案`)
+              throw new Error(`第${index + 1}题必须至少选择一个正确答案`)
             }
-          } else if (q.answer.length > 0) {
-            // 答案已经是数组，转换索引
-            for (const originalIdx of q.answer) {
-              if (typeof originalIdx !== 'number' || isNaN(originalIdx)) {
-                continue // 跳过无效的索引
-              }
-              if (originalIdx >= 0 && originalIdx < indexMap.length && indexMap[originalIdx] !== undefined) {
-                const newIdx = indexMap[originalIdx]
-                if (!answer.includes(newIdx)) {
-                  answer.push(newIdx)
-                }
-              }
-            }
-            if (answer.length === 0) {
-              throw new Error(`第${index + 1}题的答案索引无效（可能对应空选项）`)
-            }
-          } else {
-            throw new Error(`第${index + 1}题必须至少选择一个正确答案`)
           }
           
           // 注意：后端会根据answer数组长度自动判断单选/多选（len(answer) > 1 = 多选）
@@ -901,6 +1009,7 @@ export default {
             question: q.question.trim(),
             options: validOptions,
             answer: answer, // 确保是数组格式
+            type: questionType, // 题目类型：choice（选择题）或judgment（判断题）
             explanation: q.explanation ? q.explanation.trim() : ''
           }
         })
@@ -988,18 +1097,36 @@ export default {
         question: '',
         options: ['', '', '', ''],
         answer: 0,
+        type: 'choice', // 默认选择题
         explanation: ''
       }
       showQuestionEditDialog.value = true
     }
 
+    // 处理题目类型变化
+    const handleQuestionTypeChange = () => {
+      const questionType = currentQuestion.value.type
+      if (questionType === 'judgment') {
+        // 判断题：选项固定为["错误", "正确"]，答案默认为0（错误）
+        currentQuestion.value.options = ['错误', '正确']
+        currentQuestion.value.answer = 0
+      } else {
+        // 选择题：恢复选项编辑功能
+        if (currentQuestion.value.options.length < 2) {
+          currentQuestion.value.options = ['', '']
+        }
+      }
+    }
+    
     // 编辑题目
     const editQuestion = (question) => {
+      const questionType = question.type || 'choice'
       currentQuestion.value = {
         id: question.id,
         question: question.question,
-        options: [...question.options],
-        answer: question.answer,
+        options: questionType === 'judgment' ? ['错误', '正确'] : [...question.options],
+        answer: questionType === 'judgment' ? (Array.isArray(question.answer) ? question.answer[0] : question.answer) : question.answer,
+        type: questionType,
         explanation: question.explanation || ''
       }
       showQuestionEditDialog.value = true
@@ -1012,13 +1139,76 @@ export default {
         return
       }
       
+      // 验证题目内容
+      if (!currentQuestion.value.question.trim()) {
+        ElMessage.warning('请输入题目内容')
+        return
+      }
+      
+      const questionType = currentQuestion.value.type || 'choice'
+      let validOptions = []
+      let finalAnswer = []
+      
+      if (questionType === 'judgment') {
+        // 判断题：选项固定为["错误", "正确"]，答案：0=错误，1=正确
+        validOptions = ['错误', '正确']
+        const answer = currentQuestion.value.answer
+        if (answer !== 0 && answer !== 1) {
+          ElMessage.warning('判断题答案必须是0（错误）或1（正确）')
+          return
+        }
+        finalAnswer = [answer]
+      } else {
+        // 选择题：验证选项
+        validOptions = currentQuestion.value.options.filter(opt => opt.trim())
+        if (validOptions.length < 2) {
+          ElMessage.warning('至少需要2个有效选项')
+          return
+        }
+        
+        // 验证答案
+        const answer = currentQuestion.value.answer
+        if (answer === null || answer === undefined) {
+          ElMessage.warning('请选择正确答案')
+          return
+        }
+        
+        // 找到答案在有效选项中的索引
+        const originalIndex = answer
+        if (originalIndex < 0 || originalIndex >= currentQuestion.value.options.length) {
+          ElMessage.warning('答案索引无效')
+          return
+        }
+        
+        // 找到该选项在有效选项中的位置
+        let validIndex = -1
+        let currentValidIndex = 0
+        for (let i = 0; i < currentQuestion.value.options.length; i++) {
+          if (currentQuestion.value.options[i].trim()) {
+            if (i === originalIndex) {
+              validIndex = currentValidIndex
+              break
+            }
+            currentValidIndex++
+          }
+        }
+        
+        if (validIndex === -1) {
+          ElMessage.warning('答案对应的选项为空')
+          return
+        }
+        
+        finalAnswer = [validIndex]
+      }
+      
       try {
         const questionData = {
           bank_id: currentBank.value.id,
-          question: currentQuestion.value.question,
-          options: currentQuestion.value.options,
-          answer: currentQuestion.value.answer,
-          explanation: currentQuestion.value.explanation
+          question: currentQuestion.value.question.trim(),
+          options: validOptions,
+          answer: finalAnswer,
+          type: questionType,
+          explanation: currentQuestion.value.explanation || ''
         }
         
         if (currentQuestion.value.id) {
@@ -1095,6 +1285,7 @@ export default {
       jsonExample,
       handleFileChange,
       handleFileRemove,
+      handleFileExceed,
       uploadQuestionBank,
       resetUploadForm,
       resetCreateForm,
@@ -1103,6 +1294,7 @@ export default {
       addOption,
       removeOption,
       handleAnswerChange,
+      handleCreateFormQuestionTypeChange,
       createQuestionBank,
       startPractice,
       handleCommand,
@@ -1116,7 +1308,8 @@ export default {
       addNewQuestion,
       editQuestion,
       saveQuestion,
-      deleteQuestion
+      deleteQuestion,
+      handleQuestionTypeChange
     }
   }
 }

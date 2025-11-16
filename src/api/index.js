@@ -144,6 +144,12 @@ export const wrongQuestionAPI = {
     body: JSON.stringify(data),
   }),
   
+  // 批量添加错题
+  addBatch: (data) => request('/wrong-questions/batch', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  
   // 删除错题
   remove: (id) => request(`/wrong-questions/${id}`, {
     method: 'DELETE',

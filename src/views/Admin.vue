@@ -181,9 +181,10 @@
         
         <el-table :data="bankQuestions" style="width: 100%">
           <el-table-column prop="id" label="ID" width="80" />
-          <el-table-column label="类型" width="80">
+          <el-table-column label="类型" width="100">
             <template #default="scope">
-              <el-tag v-if="scope.row.is_multiple" type="warning" size="small">多选</el-tag>
+              <el-tag v-if="scope.row.type === 'judgment'" type="info" size="small">判断题</el-tag>
+              <el-tag v-else-if="scope.row.is_multiple" type="warning" size="small">多选</el-tag>
               <el-tag v-else type="primary" size="small">单选</el-tag>
             </template>
           </el-table-column>
@@ -197,7 +198,12 @@
           </el-table-column>
           <el-table-column label="正确答案" width="150">
             <template #default="scope">
-              <div v-if="scope.row.is_multiple && Array.isArray(scope.row.answer)">
+              <div v-if="scope.row.type === 'judgment'">
+                <el-tag type="success" size="small">
+                  {{ scope.row.answer && scope.row.answer[0] === 1 ? '正确' : '错误' }}
+                </el-tag>
+              </div>
+              <div v-else-if="scope.row.is_multiple && Array.isArray(scope.row.answer)">
                 <el-tag 
                   v-for="(ansIdx, idx) in scope.row.answer" 
                   :key="idx" 
@@ -233,17 +239,18 @@
           <el-input v-model="currentQuestion.question" type="textarea" :rows="3"></el-input>
         </el-form-item>
         <el-form-item label="题目类型">
-          <el-radio-group v-model="currentQuestion.is_multiple" @change="handleQuestionTypeChange">
-            <el-radio :label="false">单选题</el-radio>
-            <el-radio :label="true">多选题</el-radio>
+          <el-radio-group v-model="currentQuestion.type" @change="handleQuestionTypeChange">
+            <el-radio label="choice">选择题</el-radio>
+            <el-radio label="judgment">判断题</el-radio>
           </el-radio-group>
-          <div style="margin-top: 8px; color: #909399; font-size: 12px;">
-            当前类型：<strong>{{ currentQuestion.is_multiple ? '多选题' : '单选题' }}</strong> 
-            (is_multiple: {{ String(currentQuestion.is_multiple) }}, 
-            答案类型: {{ Array.isArray(currentQuestion.answer) ? '数组' : typeof currentQuestion.answer }})
+          <div v-if="currentQuestion.type === 'choice'" style="margin-top: 8px;">
+            <el-radio-group v-model="currentQuestion.is_multiple" size="small" @change="handleQuestionTypeChange">
+              <el-radio :label="false">单选题</el-radio>
+              <el-radio :label="true">多选题</el-radio>
+            </el-radio-group>
           </div>
         </el-form-item>
-        <el-form-item label="选项">
+        <el-form-item label="选项" v-if="currentQuestion.type === 'choice'">
           <div v-for="(option, index) in currentQuestion.options" :key="index" style="margin-bottom: 10px;">
             <el-input 
               v-model="currentQuestion.options[index]" 
@@ -279,7 +286,13 @@
             已达到最大选项数（10个）
           </div>
         </el-form-item>
-        <el-form-item :label="currentQuestion.is_multiple ? '正确答案（多选）' : '正确答案'">
+        <el-form-item v-if="currentQuestion.type === 'judgment'" label="正确答案">
+          <el-radio-group v-model="currentQuestion.answer">
+            <el-radio :label="0">错误</el-radio>
+            <el-radio :label="1">正确</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-else :label="currentQuestion.is_multiple ? '正确答案（多选）' : '正确答案'">
           <!-- 多选题：使用checkbox -->
           <template v-if="currentQuestion.is_multiple === true">
             <el-checkbox-group v-model="currentQuestion.answer" style="display: flex; flex-direction: column; gap: 8px;">
@@ -372,8 +385,9 @@ const currentQuestion = ref({
   id: '',
   question: '',
   options: ['', ''], // 初始只有2个选项
-  answer: 0, // 单选题默认选择第一个选项（数字），多选题会变为数组
+  answer: 0, // 单选题默认选择第一个选项（数字），多选题会变为数组，判断题：0=错误，1=正确
   is_multiple: false, // 是否为多选题，默认为单选题
+  type: 'choice', // 题目类型：choice（选择题）或judgment（判断题）
   explanation: ''
 })
 const bankForm = ref({
@@ -563,8 +577,9 @@ const addQuestionToBank = (bank) => {
     id: '',
     question: '',
     options: ['', ''], // 初始只有2个选项，可以添加更多
-    answer: 0, // 单选题默认选择第一个选项（数字）
+    answer: 0, // 单选题默认选择第一个选项（数字），判断题：0=错误，1=正确
     is_multiple: false, // 默认单选题
+    type: 'choice', // 默认选择题
     explanation: ''
   }
   console.log('添加题目 - currentQuestion初始化:', currentQuestion.value)
@@ -573,11 +588,20 @@ const addQuestionToBank = (bank) => {
 
 // 编辑题目
 const editQuestion = (question) => {
-  // 处理答案：保持原有格式（多选题是数组，单选题是数字）
+  // 处理答案：保持原有格式（多选题是数组，单选题是数字，判断题是0或1）
   let answer = question.answer
+  const questionType = question.type || 'choice'
   
-  // 如果题目是多选题但答案不是数组，或反之，进行修复
-  if (question.is_multiple) {
+  if (questionType === 'judgment') {
+    // 判断题：答案必须是0或1
+    if (Array.isArray(answer)) {
+      answer = answer.length > 0 ? answer[0] : 0
+    } else if (answer === null || answer === undefined) {
+      answer = 0
+    }
+    // 确保答案在0-1范围内
+    answer = answer === 1 ? 1 : 0
+  } else if (question.is_multiple) {
     // 多选题：确保是数组
     if (!Array.isArray(answer)) {
       answer = answer !== null && answer !== undefined ? [answer] : []
@@ -594,9 +618,10 @@ const editQuestion = (question) => {
   currentQuestion.value = {
     id: question.id,
     question: question.question,
-    options: [...question.options],
+    options: questionType === 'judgment' ? ['错误', '正确'] : [...question.options],
     answer: answer,
     is_multiple: question.is_multiple || false,
+    type: questionType,
     explanation: question.explanation || ''
   }
   questionEditDialogVisible.value = true
@@ -649,56 +674,42 @@ const removeOption = (index) => {
 }
 
 // 处理题目类型变化
-const handleQuestionTypeChange = (value) => {
-  console.log('=== 题目类型变化事件触发 ===')
-  console.log('@change事件接收到的值:', value, '类型:', typeof value)
-  console.log('currentQuestion.value.is_multiple 当前值:', currentQuestion.value.is_multiple)
-  console.log('当前答案:', currentQuestion.value.answer, '答案类型:', Array.isArray(currentQuestion.value.answer) ? '数组' : typeof currentQuestion.value.answer)
+const handleQuestionTypeChange = () => {
+  const questionType = currentQuestion.value.type
   
-  // 确保使用最新的is_multiple值（v-model已经更新了）
-  const isMultiple = currentQuestion.value.is_multiple
-  
-  console.log('判断isMultiple:', isMultiple, '严格等于true:', isMultiple === true, '严格等于false:', isMultiple === false)
-  
-  if (isMultiple === true) {
-    // 切换为多选题：确保answer是数组
-    console.log('>>> 切换到多选题')
-    if (!Array.isArray(currentQuestion.value.answer)) {
-      const currentAnswer = currentQuestion.value.answer
-      // 如果当前答案是有效的索引，转换为数组
-      if (currentAnswer !== null && currentAnswer !== undefined && 
-          typeof currentAnswer === 'number' &&
-          currentAnswer >= 0 && currentAnswer < currentQuestion.value.options.length) {
-        currentQuestion.value.answer = [currentAnswer]
-        console.log('✓ 将单选题答案转换为数组:', currentQuestion.value.answer)
-      } else {
-        currentQuestion.value.answer = []
-        console.log('✓ 答案无效，设置为空数组')
+  if (questionType === 'judgment') {
+    // 判断题：选项固定为["错误", "正确"]，答案默认为0（错误）
+    currentQuestion.value.options = ['错误', '正确']
+    currentQuestion.value.answer = 0
+    currentQuestion.value.is_multiple = false
+  } else {
+    // 选择题：恢复选项编辑功能
+    if (currentQuestion.value.options.length < 2) {
+      currentQuestion.value.options = ['', '']
+    }
+    // 如果答案不在有效范围内，重置为0
+    if (currentQuestion.value.is_multiple) {
+      if (!Array.isArray(currentQuestion.value.answer)) {
+        const currentAnswer = currentQuestion.value.answer
+        if (currentAnswer !== null && currentAnswer !== undefined && 
+            typeof currentAnswer === 'number' &&
+            currentAnswer >= 0 && currentAnswer < currentQuestion.value.options.length) {
+          currentQuestion.value.answer = [currentAnswer]
+        } else {
+          currentQuestion.value.answer = []
+        }
       }
     } else {
-      console.log('✓ 答案已经是数组:', currentQuestion.value.answer)
+      if (Array.isArray(currentQuestion.value.answer)) {
+        currentQuestion.value.answer = currentQuestion.value.answer.length > 0 ? 
+                                        currentQuestion.value.answer[0] : 0
+      } else if (currentQuestion.value.answer === null || currentQuestion.value.answer === undefined) {
+        currentQuestion.value.answer = 0
+      } else if (currentQuestion.value.answer < 0 || currentQuestion.value.answer >= currentQuestion.value.options.length) {
+        currentQuestion.value.answer = 0
+      }
     }
-    // 确保is_multiple设置为true
-    currentQuestion.value.is_multiple = true
-  } else {
-    // 切换为单选题：取第一个答案，如果没有则设为0
-    console.log('>>> 切换到单选题')
-    if (Array.isArray(currentQuestion.value.answer)) {
-      currentQuestion.value.answer = currentQuestion.value.answer.length > 0 ? 
-                                      currentQuestion.value.answer[0] : 0
-      console.log('✓ 将多选题答案转换为单个值:', currentQuestion.value.answer)
-    } else if (currentQuestion.value.answer === null || currentQuestion.value.answer === undefined) {
-      currentQuestion.value.answer = 0
-      console.log('✓ 答案为空，设置为0')
-    } else {
-      console.log('✓ 答案已经是单个值:', currentQuestion.value.answer)
-    }
-    // 确保is_multiple设置为false
-    currentQuestion.value.is_multiple = false
   }
-  
-  console.log('转换完成 - is_multiple:', currentQuestion.value.is_multiple, '答案:', currentQuestion.value.answer)
-  console.log('=== 转换结束 ===')
 }
 
 // 保存题目
@@ -711,38 +722,71 @@ const saveQuestion = async () => {
     return
   }
   
-  // 验证选项数量（最多10个）
-  if (currentQuestion.value.options.length > 10) {
-    ElMessage.warning('选项数量不能超过10个')
-    return
-  }
-  
-  // 过滤空选项，但保留原始索引映射
-  const validOptions = []
-  const indexMap = [] // 原始索引到新索引的映射
-  
-  for (let i = 0; i < currentQuestion.value.options.length; i++) {
-    const opt = currentQuestion.value.options[i]
-    if (opt.trim()) {
-      indexMap[i] = validOptions.length // 原始索引i对应的新索引
-      validOptions.push(opt.trim())
-    }
-  }
-  
-  if (validOptions.length < 2) {
-    ElMessage.warning('至少需要2个有效选项')
-    return
-  }
-  
-  // 验证答案并转换索引（从原始索引转换为有效选项的索引）
+  const questionType = currentQuestion.value.type || 'choice'
+  let validOptions = []
   let finalAnswer = []
-  if (currentQuestion.value.is_multiple) {
-    if (!Array.isArray(currentQuestion.value.answer) || currentQuestion.value.answer.length === 0) {
-      ElMessage.warning('多选题请至少选择一个正确答案')
+  
+  if (questionType === 'judgment') {
+    // 判断题：选项固定为["错误", "正确"]，答案：0=错误，1=正确
+    validOptions = ['错误', '正确']
+    const answer = currentQuestion.value.answer
+    if (answer !== 0 && answer !== 1) {
+      ElMessage.warning('判断题答案必须是0（错误）或1（正确）')
       return
     }
-    // 转换多选题答案索引
-    for (const originalIdx of currentQuestion.value.answer) {
+    finalAnswer = [answer]
+  } else {
+    // 选择题：验证选项数量（最多10个）
+    if (currentQuestion.value.options.length > 10) {
+      ElMessage.warning('选项数量不能超过10个')
+      return
+    }
+    
+    // 过滤空选项，但保留原始索引映射
+    const indexMap = [] // 原始索引到新索引的映射
+    
+    for (let i = 0; i < currentQuestion.value.options.length; i++) {
+      const opt = currentQuestion.value.options[i]
+      if (opt.trim()) {
+        indexMap[i] = validOptions.length // 原始索引i对应的新索引
+        validOptions.push(opt.trim())
+      }
+    }
+    
+    if (validOptions.length < 2) {
+      ElMessage.warning('至少需要2个有效选项')
+      return
+    }
+    
+    // 验证答案并转换索引（从原始索引转换为有效选项的索引）
+    if (currentQuestion.value.is_multiple) {
+      if (!Array.isArray(currentQuestion.value.answer) || currentQuestion.value.answer.length === 0) {
+        ElMessage.warning('多选题请至少选择一个正确答案')
+        return
+      }
+      // 转换多选题答案索引
+      for (const originalIdx of currentQuestion.value.answer) {
+        if (originalIdx < 0 || originalIdx >= indexMap.length || indexMap[originalIdx] === undefined) {
+          ElMessage.warning('答案索引无效（可能对应空选项）')
+          return
+        }
+        const newIdx = indexMap[originalIdx]
+        if (newIdx < 0 || newIdx >= validOptions.length) {
+          ElMessage.warning('答案索引超出选项范围')
+          return
+        }
+        // 去重
+        if (!finalAnswer.includes(newIdx)) {
+          finalAnswer.push(newIdx)
+        }
+      }
+    } else {
+      // 单选题
+      if (currentQuestion.value.answer === null || currentQuestion.value.answer === undefined) {
+        ElMessage.warning('请选择正确答案')
+        return
+      }
+      const originalIdx = currentQuestion.value.answer
       if (originalIdx < 0 || originalIdx >= indexMap.length || indexMap[originalIdx] === undefined) {
         ElMessage.warning('答案索引无效（可能对应空选项）')
         return
@@ -752,28 +796,8 @@ const saveQuestion = async () => {
         ElMessage.warning('答案索引超出选项范围')
         return
       }
-      // 去重
-      if (!finalAnswer.includes(newIdx)) {
-        finalAnswer.push(newIdx)
-      }
+      finalAnswer = [newIdx] // 转换为数组格式
     }
-  } else {
-    // 单选题
-    if (currentQuestion.value.answer === null || currentQuestion.value.answer === undefined) {
-      ElMessage.warning('请选择正确答案')
-      return
-    }
-    const originalIdx = currentQuestion.value.answer
-    if (originalIdx < 0 || originalIdx >= indexMap.length || indexMap[originalIdx] === undefined) {
-      ElMessage.warning('答案索引无效（可能对应空选项）')
-      return
-    }
-    const newIdx = indexMap[originalIdx]
-    if (newIdx < 0 || newIdx >= validOptions.length) {
-      ElMessage.warning('答案索引超出选项范围')
-      return
-    }
-    finalAnswer = [newIdx] // 转换为数组格式
   }
   
   try {
@@ -782,6 +806,7 @@ const saveQuestion = async () => {
       question: currentQuestion.value.question.trim(),
       options: validOptions, // 使用过滤后的有效选项
       answer: finalAnswer, // 已经是数组格式，索引已经转换为有效选项的索引
+      type: questionType, // 题目类型：choice（选择题）或judgment（判断题）
       explanation: currentQuestion.value.explanation || ''
     }
     

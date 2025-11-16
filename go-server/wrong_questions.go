@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 
@@ -12,7 +13,7 @@ func getWrongQuestions(c *gin.Context) {
 	userID := c.GetString("userID")
 
 	query := `
-		SELECT wq.id, wq.user_id, wq.bank_id, wq.question_id, wq.question, wq.options, wq.answer, wq.is_multiple, wq.explanation, wq.added_at, qb.name as bank_name
+		SELECT wq.id, wq.user_id, wq.bank_id, wq.question_id, wq.question, wq.options, wq.answer, wq.is_multiple, wq.type, wq.explanation, wq.added_at, qb.name as bank_name
 		FROM wrong_questions wq 
 		LEFT JOIN question_banks qb ON wq.bank_id = qb.id 
 		WHERE wq.user_id = ?
@@ -31,7 +32,8 @@ func getWrongQuestions(c *gin.Context) {
 		var wq WrongQuestion
 		var optionsJSON, answerJSON string
 		var isMultiple bool
-		err := rows.Scan(&wq.ID, &wq.UserID, &wq.BankID, &wq.QuestionID, &wq.Question, &optionsJSON, &answerJSON, &isMultiple, &wq.Explanation, &wq.AddedAt, &wq.BankName)
+		var questionType sql.NullString
+		err := rows.Scan(&wq.ID, &wq.UserID, &wq.BankID, &wq.QuestionID, &wq.Question, &optionsJSON, &answerJSON, &isMultiple, &questionType, &wq.Explanation, &wq.AddedAt, &wq.BankName)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -52,6 +54,11 @@ func getWrongQuestions(c *gin.Context) {
 		}
 
 		wq.IsMultiple = isMultiple
+		if questionType.Valid {
+			wq.Type = questionType.String
+		} else {
+			wq.Type = "choice" // 默认值
+		}
 		wrongQuestions = append(wrongQuestions, wq)
 	}
 
@@ -119,6 +126,105 @@ func addWrongQuestion(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"id":      wrongQuestionID,
 		"message": "Wrong question added successfully",
+	})
+}
+
+// addWrongQuestionsBatch 批量添加错题
+func addWrongQuestionsBatch(c *gin.Context) {
+	userID := c.GetString("userID")
+
+	var req struct {
+		Questions []struct {
+			BankID      string   `json:"bankId" binding:"required"`
+			QuestionID  string   `json:"questionId" binding:"required"`
+			Question    string   `json:"question" binding:"required"`
+			Options     []string `json:"options" binding:"required"`
+			Answer      []int    `json:"answer" binding:"required"`
+			IsMultiple  bool     `json:"is_multiple"`
+			Type        string   `json:"type"`
+			Explanation string   `json:"explanation"`
+		} `json:"questions" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(req.Questions) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Questions array is empty"})
+		return
+	}
+
+	var addedCount int
+	var skippedCount int
+
+	// 使用事务批量插入
+	tx, err := db.Begin()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to start transaction"})
+		return
+	}
+	defer tx.Rollback()
+
+	for _, q := range req.Questions {
+		// 检查是否已存在相同的错题
+		var exists bool
+		err := tx.QueryRow("SELECT EXISTS(SELECT 1 FROM wrong_questions WHERE user_id = ? AND bank_id = ? AND question_id = ?)",
+			userID, q.BankID, q.QuestionID).Scan(&exists)
+		if err != nil {
+			continue // 跳过有错误的题目
+		}
+
+		if exists {
+			skippedCount++
+			continue
+		}
+
+		// 序列化选项和答案
+		optionsJSON, err := json.Marshal(q.Options)
+		if err != nil {
+			skippedCount++
+			continue
+		}
+
+		answerJSON, err := json.Marshal(q.Answer)
+		if err != nil {
+			skippedCount++
+			continue
+		}
+
+		// 判断是否为多选题（如果前端没有传递is_multiple，则根据答案数量判断）
+		isMultiple := q.IsMultiple
+		if !isMultiple {
+			isMultiple = len(q.Answer) > 1
+		}
+
+		// 添加新的错题
+		wrongQuestionID := generateUUID()
+		_, err = tx.Exec(`INSERT INTO wrong_questions 
+			(id, user_id, bank_id, question_id, question, options, answer, is_multiple, type, explanation) 
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			wrongQuestionID, userID, q.BankID, q.QuestionID, q.Question, string(optionsJSON), string(answerJSON), isMultiple, q.Type, q.Explanation)
+		if err != nil {
+			skippedCount++
+			continue
+		}
+
+		addedCount++
+	}
+
+	// 提交事务
+	if err := tx.Commit(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to commit transaction"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":      "Wrong questions added successfully",
+		"addedCount":   addedCount,
+		"skippedCount": skippedCount,
+		"totalCount":  len(req.Questions),
 	})
 }
 

@@ -20,13 +20,13 @@
                 <el-icon><House /></el-icon>
                 <span>首页</span>
               </el-menu-item>
-              <el-menu-item index="/library">
+              <el-menu-item index="/my-library">
                 <el-icon><FolderOpened /></el-icon>
-                <span>题库管理</span>
+                <span>我的题库</span>
               </el-menu-item>
-              <el-menu-item index="/practice">
-                <el-icon><Edit /></el-icon>
-                <span>开始刷题</span>
+              <el-menu-item index="/public-library">
+                <el-icon><Share /></el-icon>
+                <span>共享题库</span>
               </el-menu-item>
               <el-menu-item index="/wrong-questions">
                 <el-icon><Warning /></el-icon>
@@ -64,6 +64,15 @@
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            
+            <!-- 移动端题库类型切换 -->
+            <div v-if="$route.path === '/library'" class="bank-type-switcher mobile-only">
+              <el-radio-group v-model="bankType" @change="handleBankTypeChange" size="small">
+                <el-radio-button label="all">全部</el-radio-button>
+                <el-radio-button label="personal">个人</el-radio-button>
+                <el-radio-button label="public">公共</el-radio-button>
+              </el-radio-group>
+            </div>
             
             <div class="user-menu" v-if="authStore.isLoggedIn">
               <el-dropdown @command="handleUserCommand">
@@ -106,9 +115,22 @@
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from './stores/auth'
+import { House, FolderOpened, Share, Warning, Menu, User, ArrowDown, SwitchButton, Setting, Document } from '@element-plus/icons-vue'
 
 export default {
   name: 'App',
+  components: {
+    House,
+    FolderOpened,
+    Share,
+    Warning,
+    Menu,
+    User,
+    ArrowDown,
+    SwitchButton,
+    Setting,
+    Document
+  },
   setup() {
     const route = useRoute()
     const router = useRouter()
@@ -184,6 +206,7 @@ body {
   align-items: center;
   gap: 20px;
 }
+
 
 .logo {
   display: flex;

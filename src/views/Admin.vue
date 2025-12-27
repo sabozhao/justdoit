@@ -82,6 +82,48 @@
           </div>
         </el-tab-pane>
 
+        <el-tab-pane label="分类管理" name="categories">
+          <div class="category-management">
+            <div class="category-header">
+              <div class="category-title">
+                <h3>共享题库分类管理</h3>
+                <p class="category-subtitle">管理共享题库的分类结构，分类将应用于所有共享题库</p>
+              </div>
+              <el-button type="primary" @click="showCreateCategoryDialog">
+                <el-icon><Plus /></el-icon>
+                创建分类
+              </el-button>
+            </div>
+            
+            <div v-if="categories.length === 0" class="category-empty">
+              <el-empty description="暂无分类，请创建第一个分类" />
+            </div>
+            <div v-else class="category-tree-container">
+              <el-tree
+                :data="categoryTree"
+                :props="{ children: 'children', label: 'name' }"
+                default-expand-all
+                node-key="id"
+                :expand-on-click-node="false"
+              >
+                <template #default="{ node, data }">
+                  <div class="category-tree-node">
+                    <div class="category-info">
+                      <span class="category-name">{{ data.name }}</span>
+                      <span class="category-description" v-if="data.description">{{ data.description }}</span>
+                    </div>
+                    <div class="category-actions">
+                      <el-button size="small" type="primary" @click="editCategory(data)">编辑</el-button>
+                      <el-button size="small" type="success" @click="addChildCategory(data)">添加子分类</el-button>
+                      <el-button size="small" type="danger" @click="deleteCategory(data)">删除</el-button>
+                    </div>
+                  </div>
+                </template>
+              </el-tree>
+            </div>
+          </div>
+        </el-tab-pane>
+
         <el-tab-pane label="系统设置" name="settings">
           <div class="system-settings">
             <el-card class="settings-card">
@@ -330,15 +372,51 @@
         <el-button type="primary" @click="saveQuestion">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 分类编辑对话框 -->
+    <el-dialog 
+      v-model="categoryDialogVisible" 
+      :title="isEditingCategory ? '编辑分类' : '创建分类'" 
+      width="500px"
+    >
+      <el-form :model="categoryForm" label-width="100px">
+        <el-form-item label="分类名称" required>
+          <el-input v-model="categoryForm.name" placeholder="请输入分类名称" />
+        </el-form-item>
+        <el-form-item label="分类描述">
+          <el-input v-model="categoryForm.description" type="textarea" :rows="3" placeholder="请输入分类描述（可选）" />
+        </el-form-item>
+        <el-form-item label="父分类">
+          <el-select v-model="categoryForm.parent_id" placeholder="选择父分类（可选，留空为根分类）" clearable style="width: 100%">
+            <el-option label="根分类（无父分类）" :value="null" />
+            <el-option 
+              v-for="cat in flatCategories" 
+              :key="cat.id" 
+              :label="getCategoryPath(cat)" 
+              :value="cat.id"
+              :disabled="isEditingCategory && cat.id === categoryForm.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="排序顺序">
+          <el-input-number v-model="categoryForm.sort_order" :min="0" :max="9999" />
+          <div style="color: #909399; font-size: 12px; margin-top: 5px;">数字越小越靠前</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="categoryDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveCategory">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
-import { adminAPI } from '../api'
+import { adminAPI, categoryAPI } from '../api'
 
 const authStore = useAuthStore()
 const activeTab = ref('users')
@@ -394,6 +472,44 @@ const bankForm = ref({
   name: '',
   description: ''
 })
+
+// 分类管理相关状态
+const categories = ref([])
+const categoryDialogVisible = ref(false)
+const categoryForm = ref({
+  id: '',
+  name: '',
+  description: '',
+  parent_id: null,
+  sort_order: 0
+})
+const isEditingCategory = ref(false)
+
+// 分类树形数据
+const categoryTree = computed(() => {
+  return categories.value
+})
+
+// 扁平化分类列表（用于下拉选择）
+const flatCategories = computed(() => {
+  const flatten = (cats, parentPath = '') => {
+    let result = []
+    for (const cat of cats) {
+      const path = parentPath ? `${parentPath} / ${cat.name}` : cat.name
+      result.push({ ...cat, path })
+      if (cat.children && cat.children.length > 0) {
+        result = result.concat(flatten(cat.children, path))
+      }
+    }
+    return result
+  }
+  return flatten(categories.value)
+})
+
+// 获取分类路径
+const getCategoryPath = (cat) => {
+  return cat.path || cat.name
+}
 
 // 检查管理员权限
 const checkAdminPermission = () => {
@@ -851,6 +967,106 @@ const handleClose = () => {
   bankDialogVisible.value = false
 }
 
+// 加载分类
+const loadCategories = async () => {
+  try {
+    const result = await categoryAPI.getAll()
+    categories.value = result || []
+  } catch (error) {
+    console.error('加载分类失败:', error)
+    ElMessage.error('加载分类失败: ' + error.message)
+  }
+}
+
+// 显示创建分类对话框
+const showCreateCategoryDialog = (parentCategory = null) => {
+  categoryForm.value = {
+    id: '',
+    name: '',
+    description: '',
+    parent_id: parentCategory ? parentCategory.id : null,
+    sort_order: 0
+  }
+  isEditingCategory.value = false
+  categoryDialogVisible.value = true
+}
+
+// 添加子分类
+const addChildCategory = (parentCategory) => {
+  showCreateCategoryDialog(parentCategory)
+}
+
+// 编辑分类
+const editCategory = (category) => {
+  categoryForm.value = {
+    id: category.id,
+    name: category.name,
+    description: category.description || '',
+    parent_id: category.parent_id || null,
+    sort_order: category.sort_order || 0
+  }
+  isEditingCategory.value = true
+  categoryDialogVisible.value = true
+}
+
+// 保存分类
+const saveCategory = async () => {
+  if (!categoryForm.value.name.trim()) {
+    ElMessage.error('请输入分类名称')
+    return
+  }
+
+  try {
+    if (isEditingCategory.value) {
+      // 更新分类
+      await categoryAPI.update(categoryForm.value.id, {
+        name: categoryForm.value.name,
+        description: categoryForm.value.description,
+        parent_id: categoryForm.value.parent_id,
+        sort_order: categoryForm.value.sort_order
+      })
+      ElMessage.success('分类更新成功')
+    } else {
+      // 创建分类
+      await categoryAPI.create({
+        name: categoryForm.value.name,
+        description: categoryForm.value.description,
+        parent_id: categoryForm.value.parent_id,
+        sort_order: categoryForm.value.sort_order
+      })
+      ElMessage.success('分类创建成功')
+    }
+    
+    categoryDialogVisible.value = false
+    await loadCategories()
+  } catch (error) {
+    console.error('保存分类失败:', error)
+    ElMessage.error(error.message || '保存分类失败')
+  }
+}
+
+// 删除分类
+const deleteCategory = async (category) => {
+  try {
+    await ElMessageBox.confirm(
+      `确定要删除分类"${category.name}"吗？如果该分类下有子分类或题库，将无法删除。`,
+      '确认删除',
+      {
+        type: 'warning'
+      }
+    )
+    
+    await categoryAPI.delete(category.id)
+    ElMessage.success('分类删除成功')
+    await loadCategories()
+  } catch (error) {
+    if (error !== 'cancel') {
+      console.error('删除分类失败:', error)
+      ElMessage.error(error.message || '删除分类失败')
+    }
+  }
+}
+
 // 加载系统设置
 const loadSettings = async () => {
   try {
@@ -1039,13 +1255,13 @@ onMounted(async () => {
     // 如果用户信息为空，等待一下再检查
     setTimeout(() => {
       if (authStore.user?.is_admin) {
-        Promise.all([loadUsers(), loadQuestionBanks(), loadStats(), loadSettings()])
+        Promise.all([loadUsers(), loadQuestionBanks(), loadStats(), loadSettings(), loadCategories()])
       } else {
         ElMessage.error('您没有访问此页面的权限')
       }
     }, 500)
   } else if (authStore.user.is_admin) {
-    await Promise.all([loadUsers(), loadQuestionBanks(), loadStats(), loadSettings()])
+    await Promise.all([loadUsers(), loadQuestionBanks(), loadStats(), loadSettings(), loadCategories()])
   } else {
     ElMessage.error('您没有访问此页面的权限')
   }
@@ -1069,6 +1285,107 @@ onMounted(async () => {
 
 .system-settings {
   padding: 20px;
+}
+
+.category-management {
+  padding: 24px;
+  min-height: 400px;
+}
+
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.category-title h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.category-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.category-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #909399;
+}
+
+.category-tree-container {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 12px 0;
+}
+
+.category-tree-container :deep(.el-tree-node) {
+  margin-bottom: 12px;
+}
+
+.category-tree-container :deep(.el-tree-node__content) {
+  height: auto;
+  min-height: 48px;
+  padding: 12px 8px;
+  border-radius: 6px;
+  transition: background-color 0.2s;
+}
+
+.category-tree-container :deep(.el-tree-node__content:hover) {
+  background-color: #f5f7fa;
+}
+
+.category-tree-node {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+  padding: 0 8px;
+}
+
+.category-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  gap: 6px;
+}
+
+.category-name {
+  font-weight: 500;
+  font-size: 15px;
+  color: #303133;
+  line-height: 1.4;
+}
+
+.category-description {
+  color: #909399;
+  font-size: 13px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-actions {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.category-actions .el-button {
+  padding: 8px 16px;
+  font-size: 13px;
 }
 
 .settings-card {
@@ -1114,75 +1431,49 @@ onMounted(async () => {
 
 .admin-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 20px;
-  margin-bottom: 30px !important;
-  margin-top: 0 !important;
-  height: 150px !important;
-  min-height: 150px !important;
-  max-height: 150px !important;
-  flex-shrink: 0 !important;
-  flex-grow: 0 !important;
-  contain: layout size style;
-  position: relative;
-  z-index: 1;
-  clear: both;
+  margin-bottom: 30px;
+  margin-top: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .stat-card {
-  background: #f5f7fa;
-  padding: 20px;
+  background: white;
+  padding: 24px;
   border-radius: 8px;
   text-align: center;
-  height: 110px !important;
-  min-height: 110px !important;
-  max-height: 110px !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
   box-sizing: border-box;
-  display: flex !important;
-  flex-direction: column !important;
+  display: flex;
+  flex-direction: column;
   justify-content: center;
-  overflow: hidden;
-  contain: layout size style;
-  flex-shrink: 0 !important;
-  flex-grow: 0 !important;
-  position: relative;
+  align-items: center;
+  min-height: 120px;
 }
 
 .stat-card h3 {
-  margin: 0 0 10px 0;
+  margin: 0 0 12px 0;
   color: #606266;
   font-size: 14px;
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
-  height: 20px;
+  font-weight: 500;
+  line-height: 1.4;
 }
 
 .stat-card p {
-  margin: 0;
+  margin: 8px 0 0 0;
   color: #909399;
-  font-size: 12px;
-  line-height: 1.2;
-  flex-shrink: 0;
-  height: 16px;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .stat-number {
-  font-size: 2em;
+  font-size: 36px;
   font-weight: bold;
   color: #409eff;
-  margin-bottom: 5px;
-  line-height: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex-shrink: 0;
-  height: 40px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  margin: 0;
+  line-height: 1.2;
 }
 
 .admin-tabs {

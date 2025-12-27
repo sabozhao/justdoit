@@ -573,6 +573,10 @@ func parseAIResponse(responseText string) ([]Question, *ParseAIResponseStats, []
 	}
 	responseText = strings.TrimSpace(responseText)
 
+	// 修复JSON字符串中的未转义控制字符（制表符、换行符等）
+	// 使用正则表达式在字符串值中转义这些字符
+	responseText = fixUnescapedControlChars(responseText)
+
 	// 使用临时结构体
 	type TempQuestion struct {
 		Question    string   `json:"question"`
@@ -1388,4 +1392,77 @@ func uploadFileToCOSAndGetFileID(file multipart.File, header *multipart.FileHead
 	fileID := *response.Response.ID
 	log.Printf("成功获取FileID: %s", fileID)
 	return fileID, nil
+}
+
+// fixUnescapedControlChars 修复JSON字符串中的未转义控制字符
+// 这个方法会在字符串值中转义制表符、换行符等控制字符，但不会破坏已经转义的字符
+func fixUnescapedControlChars(jsonStr string) string {
+	// 使用状态机来正确处理字符串中的控制字符
+	var result strings.Builder
+	inString := false
+	escapeNext := false
+	bytes := []byte(jsonStr)
+
+	for i := 0; i < len(bytes); i++ {
+		char := bytes[i]
+
+		if escapeNext {
+			// 当前字符是转义字符后的字符，直接添加
+			result.WriteByte(char)
+			escapeNext = false
+			continue
+		}
+
+		if char == '\\' {
+			// 遇到反斜杠，标记下一个字符为转义字符
+			result.WriteByte(char)
+			escapeNext = true
+			continue
+		}
+
+		if char == '"' {
+			// 切换字符串状态
+			inString = !inString
+			result.WriteByte(char)
+			continue
+		}
+
+		if inString {
+			// 在字符串内部，需要转义控制字符
+			switch char {
+			case '\t':
+				// 检查前面是否有反斜杠（已经转义）
+				if i > 0 && bytes[i-1] != '\\' {
+					result.WriteString("\\t")
+				} else {
+					result.WriteByte(char)
+				}
+			case '\n':
+				if i > 0 && bytes[i-1] != '\\' {
+					result.WriteString("\\n")
+				} else {
+					result.WriteByte(char)
+				}
+			case '\r':
+				if i > 0 && bytes[i-1] != '\\' {
+					result.WriteString("\\r")
+				} else {
+					result.WriteByte(char)
+				}
+			default:
+				// 其他控制字符（ASCII 0-31，除了已处理的）
+				if char < 32 && char != ' ' {
+					// 转义其他控制字符
+					result.WriteString(fmt.Sprintf("\\u%04x", char))
+				} else {
+					result.WriteByte(char)
+				}
+			}
+		} else {
+			// 不在字符串内部，直接添加
+			result.WriteByte(char)
+		}
+	}
+
+	return result.String()
 }

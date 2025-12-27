@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"bytes"
+	"database/sql"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,20 +22,33 @@ import (
 	"github.com/tealeg/xlsx/v3"
 )
 
-// 题库相关处理函数
+// 题库相关处理函数（只处理个人题库）
 func getQuestionBanks(c *gin.Context) {
 	userID := c.GetString("userID")
+	
+	// 获取查询参数
+	categoryID := c.Query("category_id") // 分类ID（可选）
 
+	// 构建查询：只查询个人题库（user_id = 当前用户）
 	query := `
-		SELECT qb.id, qb.user_id, qb.name, qb.description, qb.created_at, COUNT(q.id) as question_count
+		SELECT qb.id, qb.user_id, qb.name, qb.description, qb.category_id, 
+		       c.name as category_name, qb.created_at, COUNT(q.id) as question_count
 		FROM question_banks qb 
 		LEFT JOIN questions q ON qb.id = q.bank_id 
+		LEFT JOIN categories c ON qb.category_id = c.id
 		WHERE qb.user_id = ?
-		GROUP BY qb.id 
-		ORDER BY qb.created_at DESC
 	`
+	args := []interface{}{userID}
 
-	rows, err := db.Query(query, userID)
+	// 如果指定了分类ID，添加分类筛选
+	if categoryID != "" && categoryID != "null" {
+		query += " AND qb.category_id = ?"
+		args = append(args, categoryID)
+	}
+
+	query += " GROUP BY qb.id ORDER BY qb.created_at DESC"
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -43,10 +58,20 @@ func getQuestionBanks(c *gin.Context) {
 	var banks []QuestionBank
 	for rows.Next() {
 		var bank QuestionBank
-		err := rows.Scan(&bank.ID, &bank.UserID, &bank.Name, &bank.Description, &bank.CreatedAt, &bank.QuestionCount)
+		var categoryID sql.NullString
+		var categoryName sql.NullString
+		err := rows.Scan(&bank.ID, &bank.UserID, &bank.Name, &bank.Description, 
+			&categoryID, &categoryName, &bank.CreatedAt, &bank.QuestionCount)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		bank.IsPublic = false // 个人题库
+		if categoryID.Valid {
+			bank.CategoryID = &categoryID.String
+		}
+		if categoryName.Valid {
+			bank.CategoryName = categoryName.String
 		}
 		banks = append(banks, bank)
 	}
@@ -58,13 +83,30 @@ func getQuestionBankByID(c *gin.Context) {
 	userID := c.GetString("userID")
 	bankID := c.Param("id")
 
-	// 获取题库信息
+	// 获取个人题库信息
 	var bank QuestionBank
-	err := db.QueryRow("SELECT id, user_id, name, description, created_at FROM question_banks WHERE id = ? AND user_id = ?",
-		bankID, userID).Scan(&bank.ID, &bank.UserID, &bank.Name, &bank.Description, &bank.CreatedAt)
+	var categoryID sql.NullString
+	var categoryName sql.NullString
+	err := db.QueryRow(`
+		SELECT qb.id, qb.user_id, qb.name, qb.description, qb.category_id, 
+		       c.name as category_name, qb.created_at 
+		FROM question_banks qb
+		LEFT JOIN categories c ON qb.category_id = c.id
+		WHERE qb.id = ? AND qb.user_id = ?
+	`, bankID, userID).Scan(&bank.ID, &bank.UserID, &bank.Name, &bank.Description, 
+		&categoryID, &categoryName, &bank.CreatedAt)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Question bank not found"})
 		return
+	}
+	
+	bank.IsPublic = false // 个人题库
+	
+	if categoryID.Valid {
+		bank.CategoryID = &categoryID.String
+	}
+	if categoryName.Valid {
+		bank.CategoryName = categoryName.String
 	}
 
 	// 获取题目，按类型排序：判断题 -> 单选题 -> 多选题
@@ -119,12 +161,27 @@ func createQuestionBank(c *gin.Context) {
 	var req struct {
 		Name        string     `json:"name" binding:"required"`
 		Description string     `json:"description"`
+		CategoryID  *string    `json:"category_id"`  // 分类ID（可选，必须是个人分类）
 		Questions   []Question `json:"questions"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 如果指定了分类，验证分类是否存在且属于当前用户（个人分类）
+	if req.CategoryID != nil && *req.CategoryID != "" {
+		var categoryUserID string
+		err := db.QueryRow("SELECT user_id FROM categories WHERE id = ?", *req.CategoryID).Scan(&categoryUserID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "指定的分类不存在"})
+			return
+		}
+		if categoryUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权使用该分类"})
+			return
+		}
 	}
 
 	// 开始事务
@@ -135,10 +192,10 @@ func createQuestionBank(c *gin.Context) {
 	}
 	defer tx.Rollback()
 
-	// 插入题库
+	// 插入个人题库
 	bankID := generateUUID()
-	_, err = tx.Exec("INSERT INTO question_banks (id, user_id, name, description) VALUES (?, ?, ?, ?)",
-		bankID, userID, req.Name, req.Description)
+	_, err = tx.Exec("INSERT INTO question_banks (id, user_id, name, description, category_id) VALUES (?, ?, ?, ?, ?)",
+		bankID, userID, req.Name, req.Description, req.CategoryID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create question bank"})
 		return
@@ -190,16 +247,125 @@ func createQuestionBank(c *gin.Context) {
 	})
 }
 
-func uploadQuestionBankFile(c *gin.Context) {
+// 更新个人题库
+func updateQuestionBank(c *gin.Context) {
 	userID := c.GetString("userID")
 	bankID := c.Param("id")
 
-	// 检查题库是否存在且属于当前用户
-	var exists bool
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM question_banks WHERE id = ? AND user_id = ?)", bankID, userID).Scan(&exists)
-	if err != nil || !exists {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Question bank not found"})
+	var req struct {
+		Name        string  `json:"name" binding:"required"`
+		Description string  `json:"description"`
+		CategoryID  *string `json:"category_id"` // 分类ID（可选，必须是个人分类）
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// 检查题库是否存在且属于当前用户
+	var currentUserID string
+	err := db.QueryRow("SELECT user_id FROM question_banks WHERE id = ?", bankID).Scan(&currentUserID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "题库不存在"})
+		return
+	}
+	if currentUserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权更新此题库"})
+		return
+	}
+
+	// 如果指定了分类，验证分类是否存在且属于当前用户（个人分类）
+	if req.CategoryID != nil && *req.CategoryID != "" {
+		var categoryUserID string
+		err := db.QueryRow("SELECT user_id FROM categories WHERE id = ?", *req.CategoryID).Scan(&categoryUserID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "指定的分类不存在"})
+			return
+		}
+		if categoryUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权使用该分类"})
+			return
+		}
+	}
+
+	// 更新个人题库信息
+	_, err = db.Exec("UPDATE question_banks SET name = ?, description = ?, category_id = ? WHERE id = ?",
+		req.Name, req.Description, req.CategoryID, bankID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "更新题库失败: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "题库更新成功"})
+}
+
+func uploadQuestionBankFile(c *gin.Context) {
+	userID := c.GetString("userID")
+	bankID := c.Param("id")
+	
+	// 获取表单参数
+	bankName := c.PostForm("bankName")
+	categoryID := c.PostForm("category_id")
+	
+	var targetBankID string
+	var needCreateBank bool
+
+	// 判断是上传到已有题库还是创建新题库
+	if bankID == "new" || bankID == "" {
+		// 创建新个人题库
+		if bankName == "" {
+			// 如果没有提供题库名称，使用文件名（去掉扩展名）
+			filename := c.PostForm("filename")
+			if filename == "" {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请提供题库名称或上传文件"})
+				return
+			}
+			bankName = strings.TrimSuffix(filename, filepath.Ext(filename))
+		}
+		
+		// 如果指定了分类，验证分类是否存在且属于当前用户（个人分类）
+		var categoryIDPtr *string
+		if categoryID != "" {
+			var categoryUserID string
+			err := db.QueryRow("SELECT user_id FROM categories WHERE id = ?", categoryID).Scan(&categoryUserID)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "指定的分类不存在"})
+				return
+			}
+			if categoryUserID != userID {
+				c.JSON(http.StatusForbidden, gin.H{"error": "无权使用该分类"})
+				return
+			}
+			categoryIDPtr = &categoryID
+		}
+		
+		// 创建新个人题库
+		targetBankID = generateUUID()
+		_, err := db.Exec("INSERT INTO question_banks (id, user_id, name, description, category_id) VALUES (?, ?, ?, ?, ?)",
+			targetBankID, userID, bankName, "", categoryIDPtr)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "创建题库失败: " + err.Error()})
+			return
+		}
+		needCreateBank = true
+	} else {
+		// 上传到已有个人题库
+		// 检查题库是否存在且属于当前用户
+		var bankUserID string
+		err := db.QueryRow("SELECT user_id FROM question_banks WHERE id = ?", bankID).Scan(&bankUserID)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Question bank not found"})
+			return
+		}
+		
+		if bankUserID != userID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该题库"})
+			return
+		}
+		
+		targetBankID = bankID
+		needCreateBank = false
 	}
 
 	// 获取解析模式（默认为固定格式）
@@ -250,6 +416,8 @@ func uploadQuestionBankFile(c *gin.Context) {
 		log.Printf("使用固定格式模式解析文件: %s", filename)
 		switch ext {
 		case ".xlsx", ".xls":
+			// 重置文件指针，确保可以完整读取
+			file.Seek(0, 0)
 			questions, err = parseExcelFile(file)
 			if err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": "Excel文件解析失败: " + err.Error()})
@@ -344,7 +512,7 @@ func uploadQuestionBankFile(c *gin.Context) {
 		}
 		
 		_, err = tx.Exec("INSERT INTO questions (id, bank_id, question, options, answer, is_multiple, type, explanation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-			questionID, bankID, q.Question, string(optionsJSON), string(answerJSON), isMultiple, questionType, q.Explanation)
+			questionID, targetBankID, q.Question, string(optionsJSON), string(answerJSON), isMultiple, questionType, q.Explanation)
 		if err != nil {
 			log.Printf("错误: 第 %d 题插入失败: %v\n", i+1, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("第 %d 题插入失败: %v", i+1, err)})
@@ -364,28 +532,52 @@ func uploadQuestionBankFile(c *gin.Context) {
 		return
 	}
 
-	log.Printf("成功插入 %d/%d 道题目到题库 %s\n", successCount, len(questions), bankID)
+	log.Printf("成功插入 %d/%d 道题目到题库 %s\n", successCount, len(questions), targetBankID)
 
 	// 获取题库信息
-	var bankName, bankDescription string
-	err = db.QueryRow("SELECT name, description FROM question_banks WHERE id = ?", bankID).Scan(&bankName, &bankDescription)
+	var finalBankName, bankDescription string
+	var bankIsPublic bool
+	err = db.QueryRow("SELECT name, description, is_public FROM question_banks WHERE id = ?", targetBankID).Scan(&finalBankName, &bankDescription, &bankIsPublic)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get question bank info"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":            bankID,
-		"name":          bankName,
+	response := gin.H{
+		"id":            targetBankID,
+		"name":          finalBankName,
 		"description":   bankDescription,
 		"questionCount": successCount,
-		"message":       fmt.Sprintf("成功导入 %d/%d 道题目到题库", successCount, len(questions)),
-	})
+		"is_public":     bankIsPublic,
+	}
+	
+	// 如果创建了新题库，添加提示信息
+	if needCreateBank {
+		response["message"] = "题库创建成功并已上传题目"
+		response["created"] = true
+	} else {
+		response["message"] = "题目上传成功"
+		response["created"] = false
+	}
+	
+	c.JSON(http.StatusOK, response)
 }
 
 func deleteQuestionBank(c *gin.Context) {
 	userID := c.GetString("userID")
 	bankID := c.Param("id")
+
+	// 检查题库是否存在且属于当前用户
+	var currentUserID string
+	err := db.QueryRow("SELECT user_id FROM question_banks WHERE id = ?", bankID).Scan(&currentUserID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "题库不存在"})
+		return
+	}
+	if currentUserID != userID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除此题库"})
+		return
+	}
 
 	// 开始事务
 	tx, err := db.Begin()
@@ -416,7 +608,7 @@ func deleteQuestionBank(c *gin.Context) {
 		return
 	}
 
-	// 删除题库
+	// 删除个人题库
 	result, err := tx.Exec("DELETE FROM question_banks WHERE id = ? AND user_id = ?", bankID, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete question bank"})
@@ -770,6 +962,9 @@ func parseJSONFile(file multipart.File) ([]Question, error) {
 }
 
 func parseExcelFile(file multipart.File) ([]Question, error) {
+	// 重置文件指针到开头（确保可以完整读取文件）
+	file.Seek(0, 0)
+
 	// 创建临时文件来保存上传的Excel文件
 	tempFile, err := os.CreateTemp("", "upload_*.xlsx")
 	if err != nil {
@@ -784,6 +979,9 @@ func parseExcelFile(file multipart.File) ([]Question, error) {
 		return nil, fmt.Errorf("保存临时文件失败: %v", err)
 	}
 
+	// 确保临时文件已写入磁盘
+	tempFile.Sync()
+
 	// 打开Excel文件
 	xlFile, err := xlsx.OpenFile(tempFile.Name())
 	if err != nil {
@@ -794,31 +992,86 @@ func parseExcelFile(file multipart.File) ([]Question, error) {
 		return nil, fmt.Errorf("Excel文件中没有工作表")
 	}
 
-	sheet := xlFile.Sheets[0]
+	log.Printf("Excel文件包含 %d 个工作表: %v", len(xlFile.Sheets), func() []string {
+		names := make([]string, len(xlFile.Sheets))
+		for i, s := range xlFile.Sheets {
+			names[i] = s.Name
+		}
+		return names
+	}())
 
-	// 将sheet转换为二维字符串数组
-	var rows [][]string
+	// 存储所有题目的切片
+	var allQuestions []Question
 
-	// 遍历工作表的行
-	err = sheet.ForEachRow(func(r *xlsx.Row) error {
-		var rowData []string
-		err := r.ForEachCell(func(c *xlsx.Cell) error {
-			value := c.String()
-			rowData = append(rowData, value)
+	// 遍历所有工作表
+	for sheetIndex, sheet := range xlFile.Sheets {
+		log.Printf("开始处理工作表 %d/%d: %s (MaxRow: %d)", sheetIndex+1, len(xlFile.Sheets), sheet.Name, sheet.MaxRow)
+
+		// 将sheet转换为二维字符串数组
+		var rows [][]string
+		rowCount := 0
+
+		// 遍历工作表的行
+		err = sheet.ForEachRow(func(r *xlsx.Row) error {
+			var rowData []string
+			hasData := false
+			err := r.ForEachCell(func(c *xlsx.Cell) error {
+				value := c.String()
+				if strings.TrimSpace(value) != "" {
+					hasData = true
+				}
+				rowData = append(rowData, value)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			// 即使行看起来为空，也添加它（可能包含格式信息）
+			rows = append(rows, rowData)
+			if hasData {
+				rowCount++
+			}
 			return nil
 		})
-		if err != nil {
-			return err
-		}
-		rows = append(rows, rowData)
-		return nil
-	})
 
-	if err != nil {
-		return nil, fmt.Errorf("读取Excel数据失败: %v", err)
+		if err != nil {
+			log.Printf("读取工作表 %s 失败: %v，跳过该工作表", sheet.Name, err)
+			continue
+		}
+
+		if len(rows) == 0 {
+			log.Printf("工作表 %s 没有数据行，跳过", sheet.Name)
+			continue
+		}
+
+		if rowCount == 0 {
+			log.Printf("工作表 %s 所有行都为空，跳过", sheet.Name)
+			continue
+		}
+
+		log.Printf("工作表 %s 读取完成，共 %d 行数据（其中 %d 行有内容）", sheet.Name, len(rows), rowCount)
+
+		// 解析当前工作表的题目
+		sheetQuestions, err := parseExcelData(rows)
+		if err != nil {
+			log.Printf("解析工作表 %s 的题目失败: %v，跳过该工作表", sheet.Name, err)
+			continue
+		}
+
+		if len(sheetQuestions) > 0 {
+			log.Printf("工作表 %s 解析成功，共 %d 道题目", sheet.Name, len(sheetQuestions))
+			allQuestions = append(allQuestions, sheetQuestions...)
+		} else {
+			log.Printf("工作表 %s 未找到有效题目（已读取 %d 行数据）", sheet.Name, len(rows))
+		}
 	}
 
-	return parseExcelData(rows)
+	if len(allQuestions) == 0 {
+		return nil, fmt.Errorf("所有工作表中都未找到有效的题目")
+	}
+
+	log.Printf("Excel文件解析完成，共处理 %d 个工作表，总计 %d 道题目", len(xlFile.Sheets), len(allQuestions))
+	return allQuestions, nil
 }
 
 func parseCSVFile(file multipart.File) ([]Question, error) {
@@ -937,9 +1190,9 @@ func parseFileWithAI(file multipart.File, header *multipart.FileHeader, ext stri
 		log.Printf("保存提取文本到文件失败: %v（不影响解析流程）", saveErr)
 	}
 
-	// 2. 智能分片（每片约10KB，尽量在换行或题目边界分片）
-	chunks := splitTextIntoSmartChunks(text, 10*1024) // 10KB per chunk
-	log.Printf("文件已拆分为 %d 个分片", len(chunks))
+	// 2. 智能分片（每片约10KB，尽量在换行或题目边界分片，带重叠以避免题目截断）
+	chunks := splitTextIntoSmartChunksWithOverlap(text, 10*1024, 1*1024) // 10KB per chunk, 1KB overlap
+	log.Printf("文件已拆分为 %d 个分片（带重叠以避免题目截断）", len(chunks))
 
 	// 3. 顺序处理所有分片
 	aiParseStart := time.Now()
@@ -984,8 +1237,13 @@ func extractTextFromFile(file multipart.File, header *multipart.FileHeader, ext 
 	}
 }
 
-// splitTextIntoSmartChunks 智能分片：尽量在换行或题目边界分片
+// splitTextIntoSmartChunks 智能分片：尽量在换行或题目边界分片（保留原函数以兼容）
 func splitTextIntoSmartChunks(text string, targetChunkSize int) []string {
+	return splitTextIntoSmartChunksWithOverlap(text, targetChunkSize, 0)
+}
+
+// splitTextIntoSmartChunksWithOverlap 智能分片：尽量在换行或题目边界分片，带重叠以避免题目截断
+func splitTextIntoSmartChunksWithOverlap(text string, targetChunkSize int, overlapSize int) []string {
 	if len(text) <= targetChunkSize {
 		return []string{text}
 	}
@@ -993,6 +1251,7 @@ func splitTextIntoSmartChunks(text string, targetChunkSize int) []string {
 	var chunks []string
 	currentPos := 0
 	textLen := len(text)
+	lastChunkEnd := 0 // 记录上一个分片的结束位置
 
 	for currentPos < textLen {
 		remaining := textLen - currentPos
@@ -1022,7 +1281,7 @@ func splitTextIntoSmartChunks(text string, targetChunkSize int) []string {
 				searchText := text[currentPos:searchEnd]
 
 				// 查找题目结束标记（答案、解析等关键词后的换行）
-				questionEndMarkers := []string{"\n答案", "\n正确答案", "\n解析", "\n【答案", "\n【解析"}
+				questionEndMarkers := []string{"\n答案", "\n正确答案", "\n解析", "\n【答案", "\n【解析", "\n正确答案：", "\n解析：", "\n答案：", "\n参考答案"}
 				bestEndPos := -1
 				threshold60 := int(float64(targetChunkSize) * 0.6)
 				for _, marker := range questionEndMarkers {
@@ -1033,6 +1292,9 @@ func splitTextIntoSmartChunks(text string, targetChunkSize int) []string {
 						nextNewline := strings.Index(text[afterMarker:], "\n")
 						if nextNewline > 0 {
 							bestEndPos = afterMarker + nextNewline + 1
+						} else {
+							// 如果没有换行，使用标记后的位置
+							bestEndPos = afterMarker
 						}
 					}
 				}
@@ -1046,7 +1308,7 @@ func splitTextIntoSmartChunks(text string, targetChunkSize int) []string {
 					for i := endPos - 1; i > currentPos+threshold80; i-- {
 						if i < len(textRunes) {
 							r := textRunes[i]
-							if r == ' ' || r == '。' || r == '.' || r == '；' || r == ';' {
+							if r == ' ' || r == '。' || r == '.' || r == '；' || r == ';' || r == '\n' {
 								endPos = i + 1
 								break
 							}
@@ -1056,7 +1318,19 @@ func splitTextIntoSmartChunks(text string, targetChunkSize int) []string {
 			}
 		}
 
-		chunks = append(chunks, text[currentPos:endPos])
+		// 构建当前分片：包含重叠部分（如果有）
+		chunkStart := currentPos
+		if overlapSize > 0 && lastChunkEnd > 0 && currentPos > 0 {
+			// 包含前一个分片的末尾部分（重叠）
+			overlapStart := lastChunkEnd - overlapSize
+			if overlapStart < 0 {
+				overlapStart = 0
+			}
+			chunkStart = overlapStart
+		}
+
+		chunks = append(chunks, text[chunkStart:endPos])
+		lastChunkEnd = endPos
 		currentPos = endPos
 	}
 
@@ -1244,14 +1518,15 @@ func buildPromptForChunk() string {
 		"请仔细阅读以下文本内容，识别出所有题目（包括选择题和判断题），并严格按照上述要求返回JSON格式。\n\n"
 }
 
-// deduplicateQuestions 基于题目内容去重
+// deduplicateQuestions 基于题目内容去重（支持重叠分片的去重）
 func deduplicateQuestions(questions []Question) []Question {
 	seen := make(map[string]bool)
 	var unique []Question
 
 	for _, q := range questions {
 		// 使用题目的规范化内容作为唯一标识
-		normalized := strings.TrimSpace(strings.ToLower(q.Question))
+		// 移除多余的空白字符，统一大小写，移除标点符号差异
+		normalized := normalizeQuestionText(q.Question)
 		if !seen[normalized] && normalized != "" {
 			seen[normalized] = true
 			unique = append(unique, q)
@@ -1259,6 +1534,23 @@ func deduplicateQuestions(questions []Question) []Question {
 	}
 
 	return unique
+}
+
+// normalizeQuestionText 规范化题目文本用于去重比较
+func normalizeQuestionText(text string) string {
+	// 移除前后空白
+	text = strings.TrimSpace(text)
+	// 转为小写
+	text = strings.ToLower(text)
+	// 移除多余的空白字符（多个空格、制表符、换行符等）
+	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
+	// 移除常见的标点符号差异（如中文和英文的标点）
+	text = strings.ReplaceAll(text, "？", "?")
+	text = strings.ReplaceAll(text, "。", ".")
+	text = strings.ReplaceAll(text, "，", ",")
+	text = strings.ReplaceAll(text, "；", ";")
+	text = strings.ReplaceAll(text, "：", ":")
+	return text
 }
 
 // saveAIResponseToFile 将AI返回的原始数据保存到本地文件（按用户名分目录）
@@ -1540,26 +1832,39 @@ func parseExcelFileAsText(file multipart.File) (string, error) {
 		return "", fmt.Errorf("Excel文件中没有工作表")
 	}
 
-	sheet := xlFile.Sheets[0]
 	var textBuilder strings.Builder
 
-	// 遍历工作表的行，转换为文本格式
-	err = sheet.ForEachRow(func(r *xlsx.Row) error {
-		err := r.ForEachCell(func(c *xlsx.Cell) error {
-			value := c.String()
-			textBuilder.WriteString(value)
-			textBuilder.WriteString("\t")
+	// 遍历所有工作表
+	for sheetIndex, sheet := range xlFile.Sheets {
+		// 跳过空的工作表
+		if sheet.MaxRow == 0 {
+			continue
+		}
+
+		// 添加工作表标题
+		if len(xlFile.Sheets) > 1 {
+			textBuilder.WriteString(fmt.Sprintf("\n=== 工作表 %d: %s ===\n", sheetIndex+1, sheet.Name))
+		}
+
+		// 遍历工作表的行，转换为文本格式
+		err = sheet.ForEachRow(func(r *xlsx.Row) error {
+			err := r.ForEachCell(func(c *xlsx.Cell) error {
+				value := c.String()
+				textBuilder.WriteString(value)
+				textBuilder.WriteString("\t")
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			textBuilder.WriteString("\n")
 			return nil
 		})
-		if err != nil {
-			return err
-		}
-		textBuilder.WriteString("\n")
-		return nil
-	})
 
-	if err != nil {
-		return "", fmt.Errorf("读取Excel数据失败: %v", err)
+		if err != nil {
+			log.Printf("读取工作表 %s 失败: %v，跳过该工作表", sheet.Name, err)
+			continue
+		}
 	}
 
 	return textBuilder.String(), nil
@@ -2487,10 +2792,15 @@ func getBankQuestions(c *gin.Context) {
 	bankID := c.Param("id")
 	userID := c.GetString("userID")
 
-	// 检查题库是否属于当前用户
+	// 检查题库是否存在且属于当前用户（个人题库）
 	var exists bool
 	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM question_banks WHERE id = ? AND user_id = ?)", bankID, userID).Scan(&exists)
-	if err != nil || !exists {
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库查询失败: " + err.Error()})
+		return
+	}
+	
+	if !exists {
 		c.JSON(http.StatusNotFound, gin.H{"error": "题库不存在或无权访问"})
 		return
 	}

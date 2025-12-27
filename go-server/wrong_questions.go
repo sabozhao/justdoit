@@ -13,9 +13,16 @@ func getWrongQuestions(c *gin.Context) {
 	userID := c.GetString("userID")
 
 	query := `
-		SELECT wq.id, wq.user_id, wq.bank_id, wq.question_id, wq.question, wq.options, wq.answer, wq.is_multiple, wq.type, wq.explanation, wq.added_at, qb.name as bank_name
+		SELECT wq.id, wq.user_id, wq.bank_id, wq.question_id, wq.question, wq.options, wq.answer, wq.is_multiple, wq.type, wq.explanation, wq.added_at, 
+		       COALESCE(qb.name, pub_qb.name) as bank_name, 
+		       CASE WHEN pub_qb.id IS NOT NULL THEN 1 ELSE 0 END as is_public,
+		       COALESCE(qb.category_id, pub_qb.category_id) as category_id,
+		       COALESCE(c.name, pub_c.name) as category_name
 		FROM wrong_questions wq 
 		LEFT JOIN question_banks qb ON wq.bank_id = qb.id 
+		LEFT JOIN categories c ON qb.category_id = c.id
+		LEFT JOIN public_question_banks pub_qb ON wq.bank_id = pub_qb.id
+		LEFT JOIN public_categories pub_c ON pub_qb.category_id = pub_c.id
 		WHERE wq.user_id = ?
 		ORDER BY wq.added_at DESC
 	`
@@ -33,10 +40,22 @@ func getWrongQuestions(c *gin.Context) {
 		var optionsJSON, answerJSON string
 		var isMultiple bool
 		var questionType sql.NullString
-		err := rows.Scan(&wq.ID, &wq.UserID, &wq.BankID, &wq.QuestionID, &wq.Question, &optionsJSON, &answerJSON, &isMultiple, &questionType, &wq.Explanation, &wq.AddedAt, &wq.BankName)
+		var isPublic bool
+		var categoryID sql.NullString
+		var categoryName sql.NullString
+		err := rows.Scan(&wq.ID, &wq.UserID, &wq.BankID, &wq.QuestionID, &wq.Question, &optionsJSON, &answerJSON, &isMultiple, &questionType, &wq.Explanation, &wq.AddedAt, &wq.BankName, &isPublic, &categoryID, &categoryName)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
+		}
+		
+		wq.IsPublic = isPublic
+		if categoryID.Valid {
+			categoryIDStr := categoryID.String
+			wq.CategoryID = &categoryIDStr
+		}
+		if categoryName.Valid {
+			wq.CategoryName = categoryName.String
 		}
 
 		// 解析选项JSON

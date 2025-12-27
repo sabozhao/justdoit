@@ -6,17 +6,22 @@
         <p class="hero-subtitle">AI 智能识别题目，轻松导入题库，高效刷题练习</p>
         <p class="hero-free">永久免费 · 无限制使用 · AI 智能导入</p>
         <div class="hero-buttons">
-          <el-button type="primary" size="large" @click="$router.push('/library')">
+          <el-button type="primary" size="large" @click="$router.push('/my-library')">
             <el-icon><FolderOpened /></el-icon>
-            <span class="desktop-only">管理题库</span>
-            <span class="mobile-only">题库</span>
+            <span class="desktop-only">我的题库</span>
+            <span class="mobile-only">我的</span>
           </el-button>
-          <el-button type="success" size="large" @click="$router.push('/practice')">
-            <el-icon><Edit /></el-icon>
-            <span class="desktop-only">开始刷题</span>
-            <span class="mobile-only">刷题</span>
+          <el-button type="success" size="large" @click="$router.push('/public-library')">
+            <el-icon><Share /></el-icon>
+            <span class="desktop-only">共享题库</span>
+            <span class="mobile-only">共享</span>
           </el-button>
-          <el-button v-if="authStore.user && authStore.user.is_admin" type="warning" size="large" @click="$router.push('/admin')" class="admin-btn">
+          <el-button type="warning" size="large" @click="$router.push('/wrong-questions')">
+            <el-icon><Warning /></el-icon>
+            <span class="desktop-only">错题库</span>
+            <span class="mobile-only">错题</span>
+          </el-button>
+          <el-button v-if="authStore.user && authStore.user.is_admin" type="info" size="large" @click="$router.push('/admin')" class="admin-btn">
             <el-icon><Setting /></el-icon>
             <span class="desktop-only">管理员面板</span>
             <span class="mobile-only">管理</span>
@@ -27,30 +32,30 @@
 
     <div class="stats-section">
       <el-row :gutter="20">
-        <el-col :span="8">
-          <el-card class="stats-card">
+        <el-col :xs="24" :sm="12" :md="8">
+          <el-card class="stats-card" @click="$router.push('/my-library')" style="cursor: pointer;">
             <div class="stats-item">
               <el-icon class="stats-icon"><FolderOpened /></el-icon>
               <div class="stats-content">
-                <div class="stats-number">{{ questionBanks?.length || 0 }}</div>
-                <div class="stats-label">题库数量</div>
+                <div class="stats-number">{{ myBanksCount || 0 }}</div>
+                <div class="stats-label">我的题库</div>
               </div>
             </div>
           </el-card>
         </el-col>
-        <el-col :span="8">
-          <el-card class="stats-card">
+        <el-col :xs="24" :sm="12" :md="8">
+          <el-card class="stats-card" @click="$router.push('/public-library')" style="cursor: pointer;">
             <div class="stats-item">
-              <el-icon class="stats-icon"><Document /></el-icon>
+              <el-icon class="stats-icon"><Share /></el-icon>
               <div class="stats-content">
-                <div class="stats-number">{{ totalQuestions || 0 }}</div>
-                <div class="stats-label">总题目数</div>
+                <div class="stats-number">{{ publicBanksCount || 0 }}</div>
+                <div class="stats-label">共享题库</div>
               </div>
             </div>
           </el-card>
         </el-col>
-        <el-col :span="8">
-          <el-card class="stats-card">
+        <el-col :xs="24" :sm="12" :md="8">
+          <el-card class="stats-card" @click="$router.push('/wrong-questions')" style="cursor: pointer;">
             <div class="stats-item">
               <el-icon class="stats-icon"><Warning /></el-icon>
               <div class="stats-content">
@@ -107,21 +112,29 @@
 import { computed, onMounted } from 'vue'
 import { useExamStore } from '../stores/exam'
 import { useAuthStore } from '../stores/auth'
-import { Message } from '@element-plus/icons-vue'
+import { Message, FolderOpened, Share, Warning, Setting } from '@element-plus/icons-vue'
 
 export default {
   name: 'Home',
+  components: {
+    FolderOpened,
+    Share,
+    Warning,
+    Setting
+  },
   setup() {
     const examStore = useExamStore()
     const authStore = useAuthStore()
 
     const questionBanks = computed(() => examStore.questionBanks || [])
     const wrongQuestions = computed(() => examStore.wrongQuestions || [])
-    const totalQuestions = computed(() => {
+    const myBanksCount = computed(() => {
       const banks = examStore.questionBanks || []
-      return banks.reduce((total, bank) => {
-        return total + (bank.question_count || 0)
-      }, 0)
+      return banks.filter(bank => !bank.is_public).length
+    })
+    const publicBanksCount = computed(() => {
+      const banks = examStore.questionBanks || []
+      return banks.filter(bank => bank.is_public).length
     })
 
 
@@ -152,7 +165,8 @@ export default {
     return {
       questionBanks,
       wrongQuestions,
-      totalQuestions,
+      myBanksCount,
+      publicBanksCount,
       authStore
     }
   }

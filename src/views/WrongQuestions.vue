@@ -22,76 +22,120 @@
       </div>
     </div>
 
-    <div class="wrong-questions-content">
-      <!-- 按题库分组显示 -->
-      <div v-if="groupedWrongQuestions.length > 0">
-        <div
-          v-for="group in groupedWrongQuestions"
-          :key="group.bankId"
-          class="question-group"
+    <!-- 分类筛选 -->
+    <div class="wrong-questions-filters">
+      <el-select 
+        v-model="selectedCategoryId" 
+        placeholder="选择分类" 
+        clearable 
+        @change="handleCategoryChange"
+        style="width: 200px;"
+      >
+        <el-option label="全部分类" value="" />
+        <el-option label="未分类" value="uncategorized" />
+        <el-option 
+          v-for="cat in flatCategories" 
+          :key="cat.id" 
+          :label="cat.name" 
+          :value="cat.id"
         >
-          <div class="group-header">
-            <h3>{{ group.bankName }}</h3>
-            <div class="group-actions">
-              <el-button size="small" @click="practiceGroupQuestions(group.bankId)">
-                练习该题库错题 ({{ group.questions.length }})
-              </el-button>
-            </div>
+          <span>{{ getCategoryPath(cat) }}</span>
+        </el-option>
+      </el-select>
+    </div>
+
+    <div class="wrong-questions-content">
+      <!-- 按分类分组显示 -->
+      <div v-if="groupedByCategory.length > 0">
+        <div
+          v-for="categoryGroup in groupedByCategory"
+          :key="categoryGroup.categoryId || 'uncategorized'"
+          class="category-group"
+        >
+          <div class="category-header">
+            <h2>
+              <el-icon><FolderOpened /></el-icon>
+              {{ categoryGroup.categoryName }}
+            </h2>
+            <span class="category-count">{{ categoryGroup.totalCount }} 道错题</span>
           </div>
 
-          <div class="questions-list">
-            <div
-              v-for="(question, index) in group.questions"
-              :key="question.id"
-              class="question-item"
-            >
-              <div class="question-header">
-                <span class="question-number">第 {{ index + 1 }} 题</span>
-                <div style="display: flex; gap: 10px; align-items: center;">
-                  <el-tag v-if="question.is_multiple" type="warning" size="small">
-                    多选题
-                  </el-tag>
-                  <el-tag v-else type="primary" size="small">
-                    单选题
-                  </el-tag>
-                  <el-button
-                    type="text"
-                    size="small"
-                    @click="removeFromWrongQuestions(question.id)"
-                  >
-                    <el-icon><Close /></el-icon>
-                    移除
-                  </el-button>
-                </div>
+          <!-- 该分类下的题库分组 -->
+          <div
+            v-for="bankGroup in categoryGroup.banks"
+            :key="bankGroup.bankId"
+            class="question-group"
+          >
+            <div class="group-header">
+              <div class="group-title">
+                <h3>{{ bankGroup.bankName }}</h3>
+                <el-tag v-if="bankGroup.isPublic" type="success" size="small">共享题库</el-tag>
+                <el-tag v-else type="info" size="small">我的题库</el-tag>
               </div>
+              <div class="group-actions">
+                <el-button size="small" @click="practiceGroupQuestions(bankGroup.bankId)">
+                  练习该题库错题 ({{ bankGroup.questions.length }})
+                </el-button>
+              </div>
+            </div>
 
-              <div class="question-content">
-                <div class="question-text">{{ question.question }}</div>
-                
-                <div class="question-options">
-                  <div
-                    v-for="(option, optionIndex) in question.options"
-                    :key="optionIndex"
-                    class="option-item"
-                    :class="{ 'correct': isCorrectAnswer(question, optionIndex) }"
-                  >
-                    <span class="option-label">{{ String.fromCharCode(65 + optionIndex) }}</span>
-                    <span class="option-text">{{ option }}</span>
-                    <el-tag v-if="isCorrectAnswer(question, optionIndex)" type="success" size="small">
-                      正确答案
+            <div class="questions-list">
+              <div
+                v-for="(question, index) in bankGroup.questions"
+                :key="question.id"
+                class="question-item"
+              >
+                <div class="question-header">
+                  <span class="question-number">第 {{ index + 1 }} 题</span>
+                  <div style="display: flex; gap: 10px; align-items: center;">
+                    <el-tag v-if="question.type === 'judgment'" type="info" size="small">
+                      判断题
                     </el-tag>
+                    <el-tag v-else-if="question.is_multiple" type="warning" size="small">
+                      多选题
+                    </el-tag>
+                    <el-tag v-else type="primary" size="small">
+                      单选题
+                    </el-tag>
+                    <el-button
+                      type="text"
+                      size="small"
+                      @click="removeFromWrongQuestions(question.id)"
+                    >
+                      <el-icon><Close /></el-icon>
+                      移除
+                    </el-button>
                   </div>
                 </div>
 
-                <div v-if="question.explanation" class="question-explanation">
-                  <strong>解析：</strong>{{ question.explanation }}
-                </div>
+                <div class="question-content">
+                  <div class="question-text">{{ question.question }}</div>
+                  
+                  <div class="question-options">
+                    <div
+                      v-for="(option, optionIndex) in question.options"
+                      :key="optionIndex"
+                      class="option-item"
+                      :class="{ 'correct': isCorrectAnswer(question, optionIndex) }"
+                    >
+                      <span class="option-label">{{ String.fromCharCode(65 + optionIndex) }}</span>
+                      <span class="option-text">{{ option }}</span>
+                      <el-tag v-if="isCorrectAnswer(question, optionIndex)" type="success" size="small">
+                        正确答案
+                      </el-tag>
+                    </div>
+                  </div>
 
-                <div class="question-meta">
-                  <span class="meta-item">
-                    <el-icon><Calendar /></el-icon>
-                    添加时间：{{ formatDate(question.added_at) }}
-                  </span>
+                  <div v-if="question.explanation" class="question-explanation">
+                    <strong>解析：</strong>{{ question.explanation }}
+                  </div>
+
+                  <div class="question-meta">
+                    <span class="meta-item">
+                      <el-icon><Calendar /></el-icon>
+                      添加时间：{{ formatDate(question.added_at) }}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -109,7 +153,7 @@
             <p>太棒了！你还没有错题</p>
             <p>继续保持，争取全部答对</p>
           </template>
-          <el-button type="primary" @click="$router.push('/practice')">
+          <el-button type="primary" @click="$router.push('/my-library')">
             去刷题
           </el-button>
         </el-empty>
@@ -119,35 +163,127 @@
 </template>
 
 <script>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExamStore } from '../stores/exam'
+import { categoryAPI } from '../api'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { FolderOpened, Close, Calendar, Edit, Delete, SuccessFilled } from '@element-plus/icons-vue'
 
 export default {
   name: 'WrongQuestions',
+  components: {
+    FolderOpened,
+    Close,
+    Calendar,
+    Edit,
+    Delete,
+    SuccessFilled
+  },
   setup() {
     const router = useRouter()
     const examStore = useExamStore()
 
     const wrongQuestions = computed(() => examStore.wrongQuestions || [])
+    const categories = ref([])
+    const selectedCategoryId = ref('')
 
-    const groupedWrongQuestions = computed(() => {
-      const groups = {}
+    // 扁平化分类列表（用于下拉选择）
+    const flatCategories = computed(() => {
+      const flatten = (cats, parentPath = '') => {
+        let result = []
+        for (const cat of cats) {
+          const path = parentPath ? `${parentPath} / ${cat.name}` : cat.name
+          result.push({ ...cat, path })
+          if (cat.children && cat.children.length > 0) {
+            result = result.concat(flatten(cat.children, path))
+          }
+        }
+        return result
+      }
+      return flatten(categories.value)
+    })
+    
+    // 获取分类路径
+    const getCategoryPath = (cat) => {
+      return cat.path || cat.name
+    }
+
+    // 按分类分组错题
+    const groupedByCategory = computed(() => {
+      const categoryGroups = {}
       
       wrongQuestions.value.forEach(question => {
-        if (!groups[question.bank_id]) {
-          groups[question.bank_id] = {
-            bankId: question.bank_id,
+        // 获取分类ID（如果题库有分类信息）
+        const categoryId = question.category_id || null
+        const categoryName = question.category_name || '未分类'
+        const categoryKey = categoryId || 'uncategorized'
+        
+        // 筛选：如果选择了分类，只显示该分类
+        if (selectedCategoryId.value) {
+          if (selectedCategoryId.value === 'uncategorized' && categoryId !== null) {
+            return // 选择了"未分类"，但当前题目有分类，跳过
+          }
+          if (selectedCategoryId.value !== 'uncategorized' && categoryId !== selectedCategoryId.value) {
+            return // 选择了特定分类，但当前题目不是该分类，跳过
+          }
+        }
+        
+        if (!categoryGroups[categoryKey]) {
+          categoryGroups[categoryKey] = {
+            categoryId: categoryId,
+            categoryName: categoryName,
+            totalCount: 0,
+            banks: {}
+          }
+        }
+        
+        // 按题库分组
+        const bankId = question.bank_id
+        if (!categoryGroups[categoryKey].banks[bankId]) {
+          categoryGroups[categoryKey].banks[bankId] = {
+            bankId: bankId,
             bankName: question.bank_name || '未知题库',
+            isPublic: question.is_public || false,
             questions: []
           }
         }
-        groups[question.bank_id].questions.push(question)
+        
+        categoryGroups[categoryKey].banks[bankId].questions.push(question)
+        categoryGroups[categoryKey].totalCount++
       })
-
-      return Object.values(groups)
+      
+      // 转换为数组并排序（未分类放在最后）
+      const result = Object.values(categoryGroups).map(group => ({
+        ...group,
+        banks: Object.values(group.banks)
+      }))
+      
+      // 排序：有分类的在前，未分类在后
+      result.sort((a, b) => {
+        if (a.categoryId === null && b.categoryId !== null) return 1
+        if (a.categoryId !== null && b.categoryId === null) return -1
+        return (a.categoryName || '').localeCompare(b.categoryName || '')
+      })
+      
+      return result
     })
+
+    // 加载分类
+    const loadCategories = async () => {
+      try {
+        const result = await categoryAPI.getAll()
+        categories.value = result || []
+      } catch (error) {
+        console.error('加载分类失败:', error)
+        // 不显示错误，因为分类是可选的
+      }
+    }
+
+    // 处理分类切换
+    const handleCategoryChange = () => {
+      // 分类切换时，groupedByCategory 会自动更新
+    }
 
     const practiceAllWrongQuestions = () => {
       router.push('/exam/wrong-questions')
@@ -213,12 +349,18 @@ export default {
 
     // 页面加载时获取数据
     onMounted(async () => {
+      await loadCategories()
       await examStore.loadWrongQuestions()
     })
 
     return {
       wrongQuestions,
-      groupedWrongQuestions,
+      groupedByCategory,
+      categories,
+      flatCategories,
+      getCategoryPath,
+      selectedCategoryId,
+      handleCategoryChange,
       practiceAllWrongQuestions,
       practiceGroupQuestions,
       removeFromWrongQuestions,
@@ -402,5 +544,51 @@ export default {
   color: rgba(255, 255, 255, 0.8);
   font-size: 16px;
   margin: 5px 0;
+}
+
+.wrong-questions-filters {
+  margin-bottom: 20px;
+  padding: 15px 30px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+}
+
+.category-group {
+  margin-bottom: 40px;
+}
+
+.category-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 30px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  margin-bottom: 20px;
+  backdrop-filter: blur(10px);
+}
+
+.category-header h2 {
+  color: white;
+  font-size: 22px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.category-count {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 14px;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 5px 15px;
+  border-radius: 15px;
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

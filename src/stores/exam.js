@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { questionBankAPI, wrongQuestionAPI, examResultAPI } from '../api'
+import { questionBankAPI, publicQuestionBankAPI, wrongQuestionAPI, examResultAPI, categoryAPI } from '../api'
 import { ElMessage } from 'element-plus'
 
 export const useExamStore = defineStore('exam', {
@@ -22,12 +22,12 @@ export const useExamStore = defineStore('exam', {
   },
 
   actions: {
-    // 加载所有题库
-    async loadQuestionBanks() {
+    // 加载所有题库（支持type和category_id参数）
+    async loadQuestionBanks(params = {}) {
       try {
         this.loading = true
-        console.log('开始加载题库...')
-        const result = await questionBankAPI.getAll()
+        console.log('开始加载题库...', params)
+        const result = await questionBankAPI.getAll(params)
         console.log('题库加载结果:', result)
         this.questionBanks = result || []
       } catch (error) {
@@ -39,10 +39,27 @@ export const useExamStore = defineStore('exam', {
       }
     },
 
-    // 获取题库详情（包含题目）
+    // 获取题库详情（包含题目，自动判断个人题库或共享题库）
     async getQuestionBankWithQuestions(id) {
       try {
-        return await questionBankAPI.getById(id)
+        // 先尝试个人题库
+        try {
+          return await questionBankAPI.getById(id)
+        } catch (personalError) {
+          // 如果个人题库不存在（404），尝试共享题库
+          if (personalError.message && personalError.message.includes('404')) {
+            console.log('个人题库不存在，尝试获取共享题库...')
+            try {
+              return await publicQuestionBankAPI.getById(id)
+            } catch (publicError) {
+              console.error('共享题库也不存在:', publicError)
+              throw publicError
+            }
+          } else {
+            // 其他错误直接抛出
+            throw personalError
+          }
+        }
       } catch (error) {
         ElMessage.error('获取题库详情失败: ' + error.message)
         throw error
@@ -65,12 +82,28 @@ export const useExamStore = defineStore('exam', {
       }
     },
 
-    // 上传题库文件
+    // 更新题库
+    async updateQuestionBank(id, bank) {
+      try {
+        this.loading = true
+        const result = await questionBankAPI.update(id, bank)
+        await this.loadQuestionBanks() // 重新加载题库列表
+        ElMessage.success('题库更新成功')
+        return result
+      } catch (error) {
+        ElMessage.error('更新题库失败: ' + error.message)
+        throw error
+      } finally {
+        this.loading = false
+      }
+    },
+
+    // 上传题库文件（支持创建新题库，bankId为'new'时创建新题库）
     async uploadQuestionBankFile(bankId, formData) {
       try {
         this.loading = true
         const result = await questionBankAPI.uploadFile(bankId, formData)
-        await this.loadQuestionBanks() // 重新加载题库列表
+        // 注意：这里不自动重新加载，由调用方决定是否重新加载（因为可能需要保持筛选条件）
         ElMessage.success(result.message || '题库上传成功')
         return result
       } catch (error) {
@@ -82,28 +115,52 @@ export const useExamStore = defineStore('exam', {
     },
 
     // 删除题库
-    async deleteQuestionBank(id) {
+    async deleteQuestionBank(id, silent = false) {
       try {
         this.loading = true
         await questionBankAPI.delete(id)
         await this.loadQuestionBanks() // 重新加载题库列表
         await this.loadWrongQuestions() // 重新加载错题（可能有相关错题被删除）
-        ElMessage.success('题库删除成功')
+        if (!silent) {
+          ElMessage.success('题库删除成功')
+        }
       } catch (error) {
-        ElMessage.error('删除题库失败: ' + error.message)
+        if (!silent) {
+          ElMessage.error('删除题库失败: ' + error.message)
+        }
         throw error
       } finally {
         this.loading = false
       }
     },
 
-    // 获取单个题库详情（从API）
+    // 获取单个题库详情（从API，自动判断个人题库或共享题库）
     async getQuestionBankDetails(id) {
       try {
         console.log('正在获取题库详情，ID:', id)
-        const bankDetails = await questionBankAPI.getById(id)
-        console.log('获取到题库详情:', bankDetails)
-        return bankDetails
+        // 先尝试个人题库
+        try {
+          const bankDetails = await questionBankAPI.getById(id)
+          console.log('获取到个人题库详情:', bankDetails)
+          return bankDetails
+        } catch (personalError) {
+          // 如果个人题库不存在（404或NotFound），尝试共享题库
+          const errorMsg = personalError.message || personalError.toString() || ''
+          if (errorMsg.includes('404') || errorMsg.includes('NotFound') || errorMsg.includes('not found') || errorMsg.includes('不存在')) {
+            console.log('个人题库不存在，尝试获取共享题库...')
+            try {
+              const bankDetails = await publicQuestionBankAPI.getById(id)
+              console.log('获取到共享题库详情:', bankDetails)
+              return bankDetails
+            } catch (publicError) {
+              console.error('共享题库也不存在:', publicError)
+              throw publicError
+            }
+          } else {
+            // 其他错误直接抛出
+            throw personalError
+          }
+        }
       } catch (error) {
         console.error('获取题库详情失败:', error)
         ElMessage.error('获取题库详情失败: ' + error.message)
@@ -221,10 +278,27 @@ export const useExamStore = defineStore('exam', {
       }
     },
 
-    // 获取题库题目
+    // 获取题库题目（自动判断个人题库或共享题库）
     async getQuestions(bankId) {
       try {
-        return await questionBankAPI.getQuestions(bankId)
+        // 先尝试个人题库
+        try {
+          return await questionBankAPI.getQuestions(bankId)
+        } catch (personalError) {
+          // 如果个人题库不存在（404），尝试共享题库
+          if (personalError.message && personalError.message.includes('404')) {
+            console.log('个人题库不存在，尝试获取共享题库题目...')
+            try {
+              return await publicQuestionBankAPI.getQuestions(bankId)
+            } catch (publicError) {
+              console.error('共享题库也不存在:', publicError)
+              throw publicError
+            }
+          } else {
+            // 其他错误直接抛出
+            throw personalError
+          }
+        }
       } catch (error) {
         ElMessage.error('获取题目失败: ' + error.message)
         console.error('Failed to get questions:', error)

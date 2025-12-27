@@ -59,10 +59,15 @@ async function request(url, options = {}) {
   }
 }
 
-// 题库相关API
+// 题库相关API（个人题库）
 export const questionBankAPI = {
-  // 获取所有题库
-  getAll: () => request('/question-banks'),
+  // 获取所有个人题库（支持category_id参数）
+  getAll: (params = {}) => {
+    const queryParams = new URLSearchParams()
+    if (params.category_id) queryParams.append('category_id', params.category_id)
+    const queryString = queryParams.toString()
+    return request(`/question-banks${queryString ? '?' + queryString : ''}`)
+  },
   
   // 获取单个题库详情
   getById: (id) => request(`/question-banks/${id}`),
@@ -73,7 +78,13 @@ export const questionBankAPI = {
     body: JSON.stringify(data),
   }),
   
-  // 上传题库文件
+  // 更新题库
+  update: (id, data) => request(`/question-banks/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  
+  // 上传题库文件（支持创建新题库，bankId为'new'时创建新题库）
   uploadFile: async (bankId, formData) => {
     try {
       const token = getToken()
@@ -83,7 +94,7 @@ export const questionBankAPI = {
         headers.Authorization = `Bearer ${token}`
       }
       
-      const response = await fetch(`${API_BASE_URL}/question-banks/${bankId}/upload`, {
+      const response = await fetch(`${API_BASE_URL}/question-banks/${bankId || 'new'}/upload`, {
         method: 'POST',
         headers,
         body: formData,
@@ -129,6 +140,137 @@ export const questionBankAPI = {
   
   // 删除题目
   deleteQuestion: (id) => request(`/questions/${id}`, {
+    method: 'DELETE',
+  }),
+};
+
+// 个人分类相关API
+export const categoryAPI = {
+  // 获取当前用户的个人分类（树形结构）
+  getAll: () => request('/categories'),
+  
+  // 创建个人分类
+  create: (data) => request('/categories', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  
+  // 更新个人分类
+  update: (id, data) => request(`/categories/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  
+  // 删除个人分类
+  delete: (id) => request(`/categories/${id}`, {
+    method: 'DELETE',
+  }),
+};
+
+// 共享分类相关API
+export const publicCategoryAPI = {
+  // 获取所有共享分类（树形结构，所有用户可查看）
+  getAll: () => request('/public-categories'),
+  
+  // 创建共享分类（仅管理员）
+  create: (data) => request('/public-categories', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  
+  // 更新共享分类（仅管理员）
+  update: (id, data) => request(`/public-categories/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  
+  // 删除共享分类（仅管理员）
+  delete: (id) => request(`/public-categories/${id}`, {
+    method: 'DELETE',
+  }),
+};
+
+// 共享题库相关API
+export const publicQuestionBankAPI = {
+  // 获取所有共享题库（所有用户可查看）
+  getAll: (params = {}) => {
+    const queryParams = new URLSearchParams()
+    if (params.category_id) queryParams.append('category_id', params.category_id)
+    const queryString = queryParams.toString()
+    return request(`/public-question-banks${queryString ? '?' + queryString : ''}`)
+  },
+  
+  // 获取单个共享题库详情
+  getById: (id) => request(`/public-question-banks/${id}`),
+  
+  // 创建共享题库（仅管理员）
+  create: (data) => request('/public-question-banks', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  
+  // 更新共享题库（仅管理员）
+  update: (id, data) => request(`/public-question-banks/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  
+  // 上传共享题库文件（仅管理员）
+  uploadFile: async (bankId, formData) => {
+    try {
+      const token = getToken()
+      const headers = {}
+      
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/public-question-banks/${bankId || 'new'}/upload`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      })
+
+      if (!response.ok) {
+        let errorMessage = `HTTP ${response.status}`;
+        try {
+          const error = await response.json();
+          errorMessage = error.error || errorMessage;
+        } catch {
+          errorMessage = `请求失败: ${response.statusText}`;
+        }
+        throw new Error(errorMessage);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('文件上传失败:', error);
+      throw error;
+    }
+  },
+  
+  // 删除共享题库（仅管理员）
+  delete: (id) => request(`/public-question-banks/${id}`, {
+    method: 'DELETE',
+  }),
+
+  // 获取共享题库题目列表
+  getQuestions: (bankId) => request(`/public-question-banks/${bankId}/questions`),
+  
+  // 添加题目到共享题库（仅管理员）
+  addQuestion: (data) => request('/public-questions', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  }),
+  
+  // 更新共享题库题目（仅管理员）
+  updateQuestion: (id, data) => request(`/public-questions/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  }),
+  
+  // 删除共享题库题目（仅管理员）
+  deleteQuestion: (id) => request(`/public-questions/${id}`, {
     method: 'DELETE',
   }),
 };

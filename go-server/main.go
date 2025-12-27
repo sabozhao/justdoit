@@ -31,9 +31,24 @@ type QuestionBank struct {
 	UserID        string     `json:"user_id" db:"user_id"`
 	Name          string     `json:"name" db:"name"`
 	Description   string     `json:"description" db:"description"`
+	IsPublic      bool       `json:"is_public" db:"is_public"`      // 是否为公共题库
+	CategoryID    *string    `json:"category_id" db:"category_id"`  // 分类ID（可为空）
+	CategoryName  string     `json:"category_name,omitempty"`       // 分类名称（查询时填充）
 	QuestionCount int        `json:"question_count" db:"question_count"`
 	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
 	Questions     []Question `json:"questions,omitempty"`
+}
+
+// Category 行业分类
+type Category struct {
+	ID          string    `json:"id" db:"id"`
+	ParentID    *string   `json:"parent_id" db:"parent_id"`   // 父分类ID（支持多层级）
+	Name        string    `json:"name" db:"name"`
+	Description string    `json:"description" db:"description"`
+	SortOrder   int       `json:"sort_order" db:"sort_order"` // 排序顺序
+	CreatedAt   time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	Children    []Category `json:"children,omitempty"`         // 子分类（查询时填充）
 }
 
 type Question struct {
@@ -57,18 +72,21 @@ type ErrorQuestion struct {
 }
 
 type WrongQuestion struct {
-	ID          string    `json:"id" db:"id"`
-	UserID      string    `json:"user_id" db:"user_id"`
-	BankID      string    `json:"bank_id" db:"bank_id"`
-	QuestionID  string    `json:"question_id" db:"question_id"`
-	Question    string    `json:"question" db:"question"`
-	Options     []string  `json:"options" db:"options"` // 最多10个选项
-	Answer      []int     `json:"answer" db:"answer"`    // 支持多选
-	IsMultiple  bool      `json:"is_multiple" db:"is_multiple"` // 是否为多选题
-	Type        string    `json:"type" db:"type"`        // 题目类型：choice（选择题）或judgment（判断题）
-	Explanation string    `json:"explanation" db:"explanation"`
-	BankName    string    `json:"bank_name" db:"bank_name"`
-	AddedAt     time.Time `json:"added_at" db:"added_at"`
+	ID           string    `json:"id" db:"id"`
+	UserID       string    `json:"user_id" db:"user_id"`
+	BankID       string    `json:"bank_id" db:"bank_id"`
+	QuestionID   string    `json:"question_id" db:"question_id"`
+	Question     string    `json:"question" db:"question"`
+	Options      []string  `json:"options" db:"options"` // 最多10个选项
+	Answer       []int     `json:"answer" db:"answer"`    // 支持多选
+	IsMultiple   bool      `json:"is_multiple" db:"is_multiple"` // 是否为多选题
+	Type         string    `json:"type" db:"type"`        // 题目类型：choice（选择题）或judgment（判断题）
+	Explanation  string    `json:"explanation" db:"explanation"`
+	BankName     string    `json:"bank_name" db:"bank_name"`
+	IsPublic     bool      `json:"is_public" db:"is_public"`     // 题库是否为公共题库
+	CategoryID   *string   `json:"category_id" db:"category_id"` // 分类ID（可为空）
+	CategoryName string    `json:"category_name" db:"category_name"` // 分类名称
+	AddedAt      time.Time `json:"added_at" db:"added_at"`
 }
 
 type ExamResult struct {
@@ -284,20 +302,103 @@ func createTables() {
 		}
 	}
 
-	// 题库表
+	// 个人分类表（支持多层级）
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS categories (
+		id VARCHAR(255) PRIMARY KEY,
+		user_id VARCHAR(255) NOT NULL,
+		parent_id VARCHAR(255),
+		name VARCHAR(255) NOT NULL,
+		description TEXT,
+		sort_order INT DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+		FOREIGN KEY (parent_id) REFERENCES categories (id) ON DELETE SET NULL
+	)`)
+	if err != nil {
+		log.Fatal("Failed to create categories table:", err)
+	}
+
+	// 检查并添加 user_id 字段（如果不存在）
+	var userIdColumnCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'categories' AND COLUMN_NAME = 'user_id'").Scan(&userIdColumnCount)
+	if err == nil && userIdColumnCount == 0 {
+		log.Println("检测到categories表缺少user_id字段，正在添加...")
+		_, err = db.Exec("ALTER TABLE categories ADD COLUMN user_id VARCHAR(255)")
+		if err != nil {
+			log.Printf("Warning: Failed to add user_id column: %v", err)
+		} else {
+			log.Println("Successfully added user_id column to categories table")
+			// 添加外键约束
+			_, err = db.Exec("ALTER TABLE categories ADD CONSTRAINT fk_categories_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE")
+			if err != nil {
+				log.Printf("Warning: Failed to add foreign key constraint: %v", err)
+			}
+		}
+	}
+
+	// 共享分类表（支持多层级，独立存储）
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS public_categories (
+		id VARCHAR(255) PRIMARY KEY,
+		parent_id VARCHAR(255),
+		name VARCHAR(255) NOT NULL,
+		description TEXT,
+		sort_order INT DEFAULT 0,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+		FOREIGN KEY (parent_id) REFERENCES public_categories (id) ON DELETE SET NULL
+	)`)
+	if err != nil {
+		log.Fatal("Failed to create public_categories table:", err)
+	}
+
+	// 个人题库表
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS question_banks (
 		id VARCHAR(255) PRIMARY KEY,
 		user_id VARCHAR(255) NOT NULL,
 		name VARCHAR(255) NOT NULL,
 		description TEXT,
+		category_id VARCHAR(255),
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
+		FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE SET NULL
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create question_banks table:", err)
 	}
 
-	// 题目表
+	// 共享题库表（独立存储）
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS public_question_banks (
+		id VARCHAR(255) PRIMARY KEY,
+		name VARCHAR(255) NOT NULL,
+		description TEXT,
+		category_id VARCHAR(255),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (category_id) REFERENCES public_categories (id) ON DELETE SET NULL
+	)`)
+	if err != nil {
+		log.Fatal("Failed to create public_question_banks table:", err)
+	}
+
+	// 检查并添加 category_id 字段（如果不存在）
+	var categoryIdColumnCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'question_banks' AND COLUMN_NAME = 'category_id'").Scan(&categoryIdColumnCount)
+	if err == nil && categoryIdColumnCount == 0 {
+		log.Println("检测到question_banks表缺少category_id字段，正在添加...")
+		_, err = db.Exec("ALTER TABLE question_banks ADD COLUMN category_id VARCHAR(255)")
+		if err != nil {
+			log.Printf("Warning: Failed to add category_id column: %v", err)
+		} else {
+			log.Println("Successfully added category_id column to question_banks table")
+			// 添加外键约束
+			_, err = db.Exec("ALTER TABLE question_banks ADD CONSTRAINT fk_question_banks_category FOREIGN KEY (category_id) REFERENCES categories (id) ON DELETE SET NULL")
+			if err != nil {
+				log.Printf("Warning: Failed to add foreign key constraint for category_id: %v", err)
+			}
+		}
+	}
+
+	// 个人题库题目表
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS questions (
 		id VARCHAR(255) PRIMARY KEY,
 		bank_id VARCHAR(255) NOT NULL,
@@ -311,6 +412,22 @@ func createTables() {
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create questions table:", err)
+	}
+
+	// 共享题库题目表（独立存储）
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS public_questions (
+		id VARCHAR(255) PRIMARY KEY,
+		bank_id VARCHAR(255) NOT NULL,
+		question TEXT NOT NULL,
+		options JSON NOT NULL,
+		answer JSON NOT NULL,
+		is_multiple BOOLEAN DEFAULT 0,
+		type VARCHAR(20) DEFAULT 'choice',
+		explanation TEXT,
+		FOREIGN KEY (bank_id) REFERENCES public_question_banks (id) ON DELETE CASCADE
+	)`)
+	if err != nil {
+		log.Fatal("Failed to create public_questions table:", err)
 	}
 
 	// 检查并添加type字段（如果不存在）
@@ -368,11 +485,45 @@ func createTables() {
 		is_multiple BOOLEAN DEFAULT 0,
 		explanation TEXT,
 		added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-		FOREIGN KEY (bank_id) REFERENCES question_banks (id) ON DELETE CASCADE
+		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+		-- 注意：bank_id 不再使用外键约束，因为现在有两个独立的题库表（question_banks 和 public_question_banks）
+		-- 外键约束无法同时引用两个表，改为在应用层验证题库是否存在
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create wrong_questions table:", err)
+	}
+
+	// 检查并删除已存在的 bank_id 外键约束（如果存在）
+	var wrongFkExists bool
+	err = db.QueryRow(`
+		SELECT COUNT(*) > 0 
+		FROM information_schema.KEY_COLUMN_USAGE 
+		WHERE TABLE_SCHEMA = DATABASE() 
+		AND TABLE_NAME = 'wrong_questions' 
+		AND COLUMN_NAME = 'bank_id' 
+		AND REFERENCED_TABLE_NAME IS NOT NULL
+	`).Scan(&wrongFkExists)
+	if err == nil && wrongFkExists {
+		log.Println("检测到 wrong_questions 表存在 bank_id 外键约束，正在删除...")
+		// 查找外键约束名称
+		var constraintName string
+		err = db.QueryRow(`
+			SELECT CONSTRAINT_NAME 
+			FROM information_schema.KEY_COLUMN_USAGE 
+			WHERE TABLE_SCHEMA = DATABASE() 
+			AND TABLE_NAME = 'wrong_questions' 
+			AND COLUMN_NAME = 'bank_id' 
+			AND REFERENCED_TABLE_NAME IS NOT NULL
+			LIMIT 1
+		`).Scan(&constraintName)
+		if err == nil && constraintName != "" {
+			_, err = db.Exec(fmt.Sprintf("ALTER TABLE wrong_questions DROP FOREIGN KEY %s", constraintName))
+			if err != nil {
+				log.Printf("警告: 删除外键约束失败: %v", err)
+			} else {
+				log.Println("成功删除 wrong_questions 表的 bank_id 外键约束")
+			}
+		}
 	}
 
 	// 检查并升级wrong_questions表的answer字段为JSON类型
@@ -425,11 +576,45 @@ func createTables() {
 		total_questions INT NOT NULL,
 		total_time INT NOT NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
-		FOREIGN KEY (bank_id) REFERENCES question_banks (id) ON DELETE CASCADE
+		FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+		-- 注意：bank_id 不再使用外键约束，因为现在有两个独立的题库表（question_banks 和 public_question_banks）
+		-- 外键约束无法同时引用两个表，改为在应用层验证题库是否存在
 	)`)
 	if err != nil {
 		log.Fatal("Failed to create exam_results table:", err)
+	}
+
+	// 检查并删除已存在的 bank_id 外键约束（如果存在）
+	var fkExists bool
+	err = db.QueryRow(`
+		SELECT COUNT(*) > 0 
+		FROM information_schema.KEY_COLUMN_USAGE 
+		WHERE TABLE_SCHEMA = DATABASE() 
+		AND TABLE_NAME = 'exam_results' 
+		AND COLUMN_NAME = 'bank_id' 
+		AND REFERENCED_TABLE_NAME IS NOT NULL
+	`).Scan(&fkExists)
+	if err == nil && fkExists {
+		log.Println("检测到 exam_results 表存在 bank_id 外键约束，正在删除...")
+		// 查找外键约束名称
+		var constraintName string
+		err = db.QueryRow(`
+			SELECT CONSTRAINT_NAME 
+			FROM information_schema.KEY_COLUMN_USAGE 
+			WHERE TABLE_SCHEMA = DATABASE() 
+			AND TABLE_NAME = 'exam_results' 
+			AND COLUMN_NAME = 'bank_id' 
+			AND REFERENCED_TABLE_NAME IS NOT NULL
+			LIMIT 1
+		`).Scan(&constraintName)
+		if err == nil && constraintName != "" {
+			_, err = db.Exec(fmt.Sprintf("ALTER TABLE exam_results DROP FOREIGN KEY %s", constraintName))
+			if err != nil {
+				log.Printf("警告: 删除外键约束失败: %v", err)
+			} else {
+				log.Println("成功删除 bank_id 外键约束")
+			}
+		}
 	}
 }
 
@@ -492,6 +677,16 @@ func authMiddleware() gin.HandlerFunc {
 
 		c.Set("userID", claims.UserID)
 		c.Set("username", claims.Username)
+		
+		// 查询并设置 isAdmin，供后续处理函数使用
+		var isAdmin bool
+		err = db.QueryRow("SELECT is_admin FROM users WHERE id = ?", claims.UserID).Scan(&isAdmin)
+		if err == nil {
+			c.Set("isAdmin", isAdmin)
+		} else {
+			c.Set("isAdmin", false)
+		}
+		
 		c.Next()
 	}
 }
@@ -509,6 +704,8 @@ func adminMiddleware() gin.HandlerFunc {
 			return
 		}
 
+		// 设置 isAdmin 到 context，供后续处理函数使用
+		c.Set("isAdmin", true)
 		c.Next()
 	}
 }

@@ -14,6 +14,29 @@
       </div>
     </div>
 
+    <!-- 筛选栏（仅分类筛选，类型切换已移到导航栏） -->
+    <div class="library-filters">
+      <div class="filter-group">
+        <el-select 
+          v-model="selectedCategoryId" 
+          placeholder="选择分类" 
+          clearable 
+          @change="handleCategoryChange"
+          style="width: 200px"
+        >
+          <el-option label="全部分类" value="" />
+          <el-option 
+            v-for="cat in flatCategories" 
+            :key="cat.id" 
+            :label="cat.name" 
+            :value="cat.id"
+          >
+            <span>{{ getCategoryPath(cat) }}</span>
+          </el-option>
+        </el-select>
+      </div>
+    </div>
+
     <div class="library-content">
       <div v-if="loading" class="loading-container">
         <el-skeleton :rows="3" animated />
@@ -22,7 +45,14 @@
       <div v-else-if="displayedBanks.length > 0" class="banks-grid">
         <div class="bank-card-wrapper" v-for="bank in displayedBanks" :key="bank.id">
           <div class="bank-card-header">
-            <h3>{{ bank.name }}</h3>
+            <div class="bank-title-row">
+              <h3>{{ bank.name }}</h3>
+              <el-tag v-if="bank.is_public" type="success" size="small">公共</el-tag>
+              <el-tag v-else type="info" size="small">个人</el-tag>
+            </div>
+            <el-tag v-if="bank.category_name" type="warning" size="small" style="margin-top: 5px;">
+              {{ bank.category_name }}
+            </el-tag>
             <el-dropdown @command="handleCommand" trigger="click">
               <el-button type="text" class="more-btn">
                 <el-icon><MoreFilled /></el-icon>
@@ -93,6 +123,22 @@
         </el-form-item>
         <el-form-item label="题库描述">
           <el-input v-model="uploadForm.description" type="textarea" placeholder="请输入题库描述（可选）" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="uploadForm.categoryId" placeholder="选择分类（可选）" clearable style="width: 100%">
+            <el-option 
+              v-for="cat in flatCategories" 
+              :key="cat.id" 
+              :label="getCategoryPath(cat)" 
+              :value="cat.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="题库类型">
+          <el-radio-group v-model="uploadForm.isPublic">
+            <el-radio :label="false">个人题库</el-radio>
+            <el-radio :label="true">公共题库（仅管理员）</el-radio>
+          </el-radio-group>
         </el-form-item>
         <el-form-item label="选择文件" required>
           <el-upload
@@ -528,12 +574,12 @@ D. 选项D
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, inject, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useExamStore } from '@/stores/exam'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Upload, MoreFilled, VideoPlay, Delete, Document, Calendar, Edit, Loading, Download } from '@element-plus/icons-vue'
-import { API_BASE_URL } from '@/api'
+import { API_BASE_URL, categoryAPI } from '@/api'
 
 export default {
   name: 'Library',
@@ -552,6 +598,10 @@ export default {
     const router = useRouter()
     const examStore = useExamStore()
     
+    // 从 App.vue 注入的全局 bankType
+    const bankType = inject('bankType', ref('all'))
+    const handleBankTypeChange = inject('handleBankTypeChange', () => {})
+    
     const showUploadDialog = ref(false)
     const showCreateDialog = ref(false)
     const showManageDialog = ref(false)
@@ -559,10 +609,16 @@ export default {
     const uploadRef = ref(null)  // el-upload 组件引用
     const isUploading = ref(false)
     const uploadStatus = ref('')
+    // 筛选相关状态
+    const selectedCategoryId = ref('')
+    const categories = ref([])
+    
     const uploadForm = reactive({
       name: '',
       description: '',
-      parseMode: 'format' // 'format' 或 'ai'
+      parseMode: 'format', // 'format' 或 'ai'
+      isPublic: false, // 是否为公共题库
+      categoryId: '' // 分类ID
     })
     const createForm = reactive({
       name: '',
@@ -605,6 +661,60 @@ export default {
     const displayedBanks = computed(() => {
       const banks = questionBanks.value || []
       return banks.filter(bank => bank && bank.id)
+    })
+    
+    // 扁平化分类列表（用于下拉选择）
+    const flatCategories = computed(() => {
+      const flatten = (cats, parentPath = '') => {
+        let result = []
+        for (const cat of cats) {
+          const path = parentPath ? `${parentPath} / ${cat.name}` : cat.name
+          result.push({ ...cat, path })
+          if (cat.children && cat.children.length > 0) {
+            result = result.concat(flatten(cat.children, path))
+          }
+        }
+        return result
+      }
+      return flatten(categories.value)
+    })
+    
+    // 获取分类路径
+    const getCategoryPath = (cat) => {
+      return cat.path || cat.name
+    }
+    
+    // 加载分类
+    const loadCategories = async () => {
+      try {
+        const result = await categoryAPI.getAll()
+        categories.value = result || []
+      } catch (error) {
+        console.error('加载分类失败:', error)
+        // 不显示错误，因为分类是可选的
+      }
+    }
+    
+    // 处理分类切换
+    const handleCategoryChange = () => {
+      loadBanks()
+    }
+    
+    // 加载题库（带筛选参数）
+    const loadBanks = async () => {
+      const params = {}
+      if (bankType.value && bankType.value !== 'all') {
+        params.type = bankType.value
+      }
+      if (selectedCategoryId.value) {
+        params.category_id = selectedCategoryId.value
+      }
+      await examStore.loadQuestionBanks(params)
+    }
+    
+    // 监听 bankType 变化（从 App.vue 传入）
+    watch(bankType, () => {
+      loadBanks()
     })
 
     // JSON格式已移除，保留此变量以防其他地方引用
@@ -709,19 +819,18 @@ export default {
       uploadStatus.value = '正在准备上传...'
 
       try {
-        // 处理所有文件类型（Excel/CSV/PDF/DOC/DOCX）
-        uploadStatus.value = '正在创建题库...'
-        const newBank = await examStore.addQuestionBank({
-          name: uploadForm.name,
-          description: uploadForm.description,
-          questions: [] // 先创建空题库
-        })
-        
-        // 然后上传文件到这个题库
+        // 直接上传文件并创建新题库（使用 'new' 作为 bankId）
         uploadStatus.value = '正在上传文件...'
         const formData = new FormData()
         formData.append('file', selectedFile.value.raw)
         formData.append('parseMode', uploadForm.parseMode) // 传递解析模式
+        formData.append('bankName', uploadForm.name) // 题库名称
+        if (uploadForm.categoryId) {
+          formData.append('category_id', uploadForm.categoryId) // 分类ID
+        }
+        if (uploadForm.isPublic) {
+          formData.append('is_public', 'true') // 是否为公共题库
+        }
         
         // 根据解析模式设置不同的提示
         if (uploadForm.parseMode === 'ai') {
@@ -738,15 +847,18 @@ export default {
           }
         }
         
-        await examStore.uploadQuestionBankFile(newBank.id, formData)
+        // 使用 'new' 作为 bankId，后端会自动创建新题库
+        const result = await examStore.uploadQuestionBankFile('new', formData)
 
         uploadStatus.value = '上传成功！'
         // 延迟一下让用户看到成功提示
         await new Promise(resolve => setTimeout(resolve, 500))
         
+        // 重新加载题库列表（保持当前筛选条件）
+        await loadBanks()
+        
         showUploadDialog.value = false
         resetUploadForm()
-        ElMessage.success('题库上传成功！')
       } catch (error) {
         ElMessage.error('文件上传失败: ' + error.message)
       } finally {
@@ -769,6 +881,8 @@ export default {
       uploadForm.name = ''
       uploadForm.description = ''
       uploadForm.parseMode = 'format'
+      uploadForm.isPublic = false
+      uploadForm.categoryId = ''
       selectedFile.value = null
       // 清空 el-upload 组件的文件列表
       if (uploadRef.value) {
@@ -1261,10 +1375,11 @@ export default {
     // 页面加载时获取数据
     onMounted(async () => {
       try {
-        await examStore.loadQuestionBanks()
+        await loadCategories()
+        await loadBanks()
       } catch (error) {
-        console.error('加载题库失败:', error)
-        ElMessage.error('加载题库失败，请刷新页面重试')
+        console.error('加载失败:', error)
+        ElMessage.error('加载失败，请刷新页面重试')
       }
     })
 
@@ -1302,6 +1417,13 @@ export default {
       // 题目管理相关变量
       currentBank,
       bankQuestions,
+      // 筛选相关
+      selectedCategoryId,
+      categories,
+      flatCategories,
+      getCategoryPath,
+      handleCategoryChange,
+      loadBanks,
       showQuestionEditDialog,
       currentQuestion,
       manageQuestions,
@@ -1335,6 +1457,24 @@ export default {
   color: white;
   font-size: 28px;
   margin: 0;
+}
+
+.library-filters {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding: 15px 20px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  backdrop-filter: blur(10px);
+  gap: 20px;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .library-content {
@@ -1378,11 +1518,15 @@ export default {
 }
 
 .bank-card-header {
+  padding: 20px 20px 10px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.bank-title-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 20px 20px 10px;
-  border-bottom: 1px solid #f0f0f0;
+  margin-bottom: 8px;
 }
 
 .bank-card-header h3 {

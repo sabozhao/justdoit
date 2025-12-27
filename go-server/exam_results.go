@@ -33,10 +33,19 @@ func saveExamResult(c *gin.Context) {
 		req.BankID = "wrong-questions-practice"
 		bankExists = true
 	} else {
+		// 先检查个人题库
 		err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM question_banks WHERE id = ?)", req.BankID).Scan(&bankExists)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
 			return
+		}
+		// 如果个人题库不存在，检查共享题库
+		if !bankExists {
+			err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM public_question_banks WHERE id = ?)", req.BankID).Scan(&bankExists)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Database error"})
+				return
+			}
 		}
 
 		if !bankExists {

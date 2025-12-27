@@ -21,15 +21,15 @@ const routes = [
     meta: { requiresAuth: true }
   },
   {
-    path: '/library',
-    name: 'Library',
-    component: Library,
+    path: '/my-library',
+    name: 'MyLibrary',
+    component: () => import('../views/MyLibrary.vue'),
     meta: { requiresAuth: true }
   },
   {
-    path: '/practice',
-    name: 'Practice',
-    component: () => import('../views/Practice.vue'),
+    path: '/public-library',
+    name: 'PublicLibrary',
+    component: () => import('../views/PublicLibrary.vue'),
     meta: { requiresAuth: true }
   },
   {

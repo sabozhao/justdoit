@@ -8,3 +8,4 @@ go-server/*.tar.gz
 *.log
 # 包含服务器密码和敏感信息的脚本文件
 package-production-linux.sh
+node_modules/

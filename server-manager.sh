@@ -93,7 +93,7 @@ start_backend() {
     
     # 启动后端服务并记录PID
     cd go-server
-    go run main.go routes.go handlers.go wrong_questions.go exam_results.go > "../$BACKEND_LOG" 2>&1 &
+    go run $(ls *.go | grep -v '_test.go' | grep -v 'test_') > "../$BACKEND_LOG" 2>&1 &
     BACKEND_PID=$!
     cd ..
     echo $BACKEND_PID > "$BACKEND_PID_FILE"
